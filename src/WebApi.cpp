@@ -181,6 +181,12 @@ void WebApi::begin() {
     invoke("config.save",doc.as<JsonVariantConst>());
   });
   server_.on("/api/auth/session",HTTP_GET,[this](){ session(); });
+  server_.on("/api/power",HTTP_PUT,[this](){
+    if(!adminGuard()||!idle()) return;
+    StaticJsonDocument<384> doc; const char* keys[]{"baseRevision","power"};
+    if(!body(doc,keys,2)) return;
+    invoke("power.save",doc.as<JsonVariantConst>());
+  });
   server_.on("/api/auth/claim",HTTP_POST,[this](){
     if(!idle()) return;
     if(!pixies::canClaim(admin_.configured,network_.apOpen,network_.apPeer(server_.client()))) {

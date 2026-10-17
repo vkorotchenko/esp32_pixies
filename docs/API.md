@@ -37,7 +37,7 @@ One admin session exists device-wide. A new login invalidates the previous one.
   `GET /api/auth/session`. Keep it **only in JS memory**; no local/session storage,
   URLs, logs, or exported state. Clear it on 401/logout.
 - Lighting preview and Save deliberately need no admin login on the trusted LAN,
-  but retain the origin/custom-header guard. Wi-Fi, scan, restart, both resets,
+  but retain the origin/custom-header guard. Power settings, Wi-Fi, scan, restart, both resets,
   logout, and every upload phase require admin authentication.
 - No endpoint exports home passwords, AP WPA keys, admin passwords, or verifiers.
 
@@ -169,6 +169,48 @@ compares saved count with active. All three counts remain visible.
 
 The two built-ins are immutable; custom entries reflect the current live preview.
 
+## Power profile
+
+Power configuration is separate from the unchanged nine-field lighting schema.
+`GET /api/status` contains `power` (absent on firmware before this feature):
+
+```json
+{"revision":1,"supplyWatts":60,"ledMilliWatts":300,"headroomPercent":20,
+ "volts":5,"maximumMa":9000,"budgetMa":9000,"ready":true,"recovery":"none"}
+```
+
+Authenticated **`PUT /api/power`** requires the normal session, CSRF, origin and
+custom-header guards. Exact body:
+
+```json
+{"baseRevision":1,"power":{"supplyWatts":20,"ledMilliWatts":300}}
+```
+
+`baseRevision` is the independent `power.revision`, not the lighting revision.
+Supply rating is an integer 1..2000 W; full-brightness LED RGB power is an integer
+10..10000 mW (default 300 mW). Reject booleans, fractions, unknown or missing fields.
+A successful checked write returns **200 with the complete status envelope**,
+increments only the power revision and applies without restart. It neither
+previews nor saves lighting/counts. Concurrent/stale edits return 409; unconfirmed
+persistence returns 500 and retains the previous live limits. OTA/restart blocks
+the operation. Read status after an ambiguous response; never replay automatically.
+
+The fixed 5 V budget is
+`min(maximumMa, floor(supplyWatts * 1000 * 80 / (100 * 5)))`.
+Every effect includes 1 mA standby per active pixel plus calibrated RGB demand.
+For a full-white warning, use
+`count * 5 + ceil(count * ledMilliWatts * brightness / 100)` milliwatts,
+with the larger active/draft count while restart is pending. Compare this against
+`budgetMa * 5`, not just the supply's nominal rating.
+
+Power uses its own checked NVS record. `recovery` is `none`, `missing`,
+`invalid_record`, or `storage_unavailable`. Missing uses the 60 W / 300 mW profile;
+an unreadable existing record makes `ready:false`, `budgetMa:0` and RGB black
+until a valid profile is explicitly saved. Factory reset removes the power record;
+ordinary lighting saves, Wi-Fi resets and OTA preserve it. `led.standbyExceedsBudget`
+warns when even black-pixel standby exceeds the budget: dimming cannot fix that.
+Software cannot disconnect physical standby power or replace electrical protection.
+
 ## Admin session
 
 `GET /api/auth/session` → 200:
@@ -233,7 +275,7 @@ Direct AP UI/control does not require choosing a router.
 ```json
 {
   "schemaVersion":1,"bootId":"0123456789abcdef","uptimeMs":12345,"freeHeapBytes":200000,
-  "firmware":{"version":"0.3.0","target":"esp32s3_n16r8",
+  "firmware":{"version":"0.5.0","target":"esp32s3_n16r8",
     "flashBytes":16777216,"psramBytes":8388608,
     "expectedFlashBytes":16777216,"expectedPsramBytes":8388608,"memoryMatches":true},
   "settings":{"revision":2,"savedRevision":1,"dirty":true,
@@ -241,8 +283,10 @@ Direct AP UI/control does not require choosing a router.
     "restartRequired":true,"savedRestartRequired":false,"recovery":"missing"},
   "led":{"ready":true,"gpio":4,"protocol":"WS2811","order":"RGB","maxCount":1000,"budgetMa":9000,
     "estimatedMa":1900,"requestedMa":1900,"limited":false,"scalePermille":1000,
-    "frames":100,"pausedForUpdate":false,"activeLedCount":200,"requestedLedCount":250,
+    "frames":100,"pausedForUpdate":false,"standbyExceedsBudget":false,"activeLedCount":200,"requestedLedCount":250,
     "on":true,"brightness":25,"effect":"twinkle","paletteId":"builtin:light-blue"},
+  "power":{"revision":1,"supplyWatts":60,"ledMilliWatts":300,"headroomPercent":20,
+    "volts":5,"maximumMa":9000,"budgetMa":9000,"ready":true,"recovery":"missing"},
   "network":{"state":"setup_ap","hostname":"pixies-0123456789ab.local",
     "connected":false,"ip":"","ssid":"","apOpen":true,
     "apSsid":"Pixies-0123456789ab","apIp":"192.168.4.1",

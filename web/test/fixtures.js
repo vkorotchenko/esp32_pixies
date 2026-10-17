@@ -15,6 +15,10 @@ export function palettesFixture() {
 export function sessionFixture(overrides = {}) {
   return { configured: false, authenticated: false, claimAllowed: true, csrfToken: null, sessionLifetimeSeconds: 1800, ...overrides };
 }
+export function powerFixture(overrides = {}) {
+  return { revision: 1, supplyWatts: 60, ledMilliWatts: 300, headroomPercent: 20,
+    volts: 5, maximumMa: 9000, budgetMa: 9000, ready: true, recovery: "none", ...overrides };
+}
 export function statusFixture(snapshot = snapshotFixture()) {
   return {
     schemaVersion: 1, bootId: snapshot.bootId, uptimeMs: 12345, freeHeapBytes: 200000,

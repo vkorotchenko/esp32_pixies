@@ -52,6 +52,7 @@
         </div>
         <p id="effect-usage" class="help"></p>
         <div id="power-status" class="power-status" role="status">Waiting for current estimate…</div>
+        <p id="power-projection" class="notice subtle" role="status">Waiting for the power profile…</p>
       </section>
       <section class="card themes" aria-labelledby="themes-title">
         <div class="section-heading"><div><div class="eyebrow">SET THE MOOD</div><h2 id="themes-title">A color for every season</h2></div><a href="#palettes" class="text-link">Make it yours ↓</a></div>
@@ -107,6 +108,18 @@
           <button id="restart" class="secondary" data-admin disabled>Restart device…</button>
           <dl id="hardware-details" class="data-list"></dl>
           <p class="help">Current is an estimate, not electrical protection. Use fused 5 V power, appropriate wiring and power injection; verify your carrier's pinout. Do not connect 5 V to an ESP32 GPIO.</p>
+        </section>
+        <section class="card" aria-labelledby="power-settings-title">
+          <h3 id="power-settings-title">Power protection</h3>
+          <p id="power-settings-state" class="help" role="status">Reading controller power settings…</p>
+          <p class="help">Fixed 5 V pixels. Estimated output is automatically limited to 80% of the supply rating, capped by the compiled 9 A maximum. Defaults: 60 W supply, 0.3 W per LED at full brightness. Save applies without restarting.</p>
+          <form id="power-form" novalidate>
+            <label for="supply-watts">Power supply rating (W)</label><input id="supply-watts" type="text" inputmode="numeric" maxlength="4" data-admin disabled aria-describedby="supply-watts-error"><span id="supply-watts-error" class="field-error"></span>
+            <label for="led-watts">Power per LED at full brightness (W)</label><input id="led-watts" type="text" inputmode="decimal" maxlength="8" data-admin disabled aria-describedby="led-watts-error"><span id="led-watts-error" class="field-error"></span>
+            <p id="power-settings-projection" class="notice subtle" role="status"></p>
+            <div class="button-row"><button id="save-power" type="submit" data-admin disabled>Save power settings</button><button id="reload-power" type="button" class="secondary" data-admin disabled>Reload power settings</button></div>
+          </form>
+          <p class="help">Full-white estimates include a 1 mA standby allowance per physical LED. Pending count changes use the larger active/requested count. This is not a measurement or electrical cutoff; use suitable fuses, wiring and power injection.</p>
         </section>
         <section class="card" aria-labelledby="firmware-title">
           <h3 id="firmware-title">A fresh little spark</h3>

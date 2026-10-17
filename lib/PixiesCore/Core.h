@@ -49,8 +49,18 @@ struct Power {
   uint32_t estimatedMa = 0, requestedMa = 0;
   uint16_t scalePermille = 1000;
   bool limited = false;
+  bool standbyExceedsBudget = false;
 };
-Power render(const Settings&, uint64_t elapsedMs, Rgb*, size_t activeCount, uint32_t budgetMa);
+constexpr uint16_t kLedSupplyVolts = 5;
+constexpr uint8_t kPowerHeadroomPercent = 20;
+struct PowerSettings {
+  uint16_t supplyWatts = 60;
+  uint16_t ledMilliWatts = 300;
+};
+bool validatePower(const PowerSettings&, const char*& field);
+uint32_t powerBudgetMa(const PowerSettings&, uint32_t hardwareBudgetMa);
+Power render(const Settings&, uint64_t elapsedMs, Rgb*, size_t activeCount,
+             uint32_t budgetMa, uint16_t ledMilliWatts = 300);
 class Clock {
   uint32_t last_ = 0;
   uint64_t elapsed_ = 0;

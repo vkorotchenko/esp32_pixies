@@ -110,6 +110,24 @@ bool readSettings(JsonVariantConst value,Settings& out,const char*& field) {
   if(!validate(tmp,field)) return false;
   out=tmp; return true;
 }
+bool readPowerSettings(JsonVariantConst value,PowerSettings& out,const char*& field) {
+  field="power";
+  const char* const keys[]{"supplyWatts","ledMilliWatts"};
+  if(!value.is<JsonObjectConst>()) return false;
+  const auto obj=value.as<JsonObjectConst>();
+  if(obj.size()!=2||!keysOnly(obj,keys,2)) return false;
+  PowerSettings candidate; unsigned n;
+  field="supplyWatts";
+  if(!number(obj["supplyWatts"],2000,n)||n<1) return false;
+  candidate.supplyWatts=uint16_t(n);
+  field="ledMilliWatts";
+  if(!number(obj["ledMilliWatts"],10000,n)||n<10) return false;
+  candidate.ledMilliWatts=uint16_t(n);
+  out=candidate; field=nullptr; return true;
+}
+void writePowerSettings(JsonObject obj,const PowerSettings& s) {
+  obj["supplyWatts"]=s.supplyWatts; obj["ledMilliWatts"]=s.ledMilliWatts;
+}
 void writePalette(JsonObject obj,const Palette& p,bool builtin) {
   obj["id"]=p.id; obj["name"]=p.name;
   if(builtin) obj["builtin"]=true;

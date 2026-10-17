@@ -144,6 +144,32 @@ try {
   assert.equal(await evaluate(`document.querySelector("#wifi-password").value`), "");
   check("protected claim, RAM-only session/HttpOnly cookie, safe scan SSIDs, candidate network confirmation");
 
+  const lightingBeforePower = (await device()).current;
+  await fill("#supply-watts", "20"); await fill("#led-watts", "0,6");
+  await click("#refresh"); await wait(`!document.querySelector("#refresh").disabled`, "power draft refresh");
+  assert.equal(await evaluate(`document.querySelector("#led-watts").value`), "0,6", "polling preserves partially edited power settings");
+  await click("#save-power");
+  await wait(`document.querySelector("#notice").textContent.includes("Power settings saved and active")`, "independent power Save");
+  assert.equal((await device()).status.power.budgetMa, 3200);
+  assert.equal((await device()).status.power.ledMilliWatts, 600);
+  assert.deepEqual((await device()).current, lightingBeforePower, "power Save does not mutate lighting or restart");
+  assert.match(await evaluate(`document.querySelector("#power-projection").textContent`), /Warning/);
+  await fixture({ powerSave: "storage_failed" }); await fill("#supply-watts", "30"); await click("#save-power");
+  await wait(`document.querySelector("#error").textContent.includes("power persistence failure")`, "power persistence error");
+  assert.equal((await device()).status.power.supplyWatts, 20);
+  assert.equal(await evaluate(`document.querySelector("#supply-watts").value`), "30");
+  await fill("#led-watts", "0");
+  assert.equal(await evaluate(`document.querySelector("#save-power").disabled`), true);
+  await fill("#led-watts", "0.3"); await fixture({ powerConflict: true }); await click("#save-power");
+  await wait(`document.querySelector("#power-settings-state").textContent.includes("Reload power settings")`, "power revision conflict");
+  assert.equal(await evaluate(`document.querySelector("#supply-watts").value`), "30");
+  assert.equal(await evaluate(`document.querySelector("#save-power").disabled`), true);
+  await click("#reload-power");
+  await fill("#supply-watts", "60"); await fill("#led-watts", "0.3"); await click("#save-power");
+  await wait(`document.querySelector("#power-settings-state").textContent.includes("confirmed stored")`, "verified power restore");
+  assert.equal((await device()).status.power.budgetMa, 9000);
+  check("checked power Save, 80% budget, calibrated warnings, retained drafts, storage failure and revision conflicts");
+
   await fill("#led-count", "251"); await click("#refresh"); await waitReady();
   await wait(`!document.querySelector("#refresh").disabled`, "count edit survives status refresh");
   assert.equal(await evaluate(`document.querySelector("#led-count").value`), "251");

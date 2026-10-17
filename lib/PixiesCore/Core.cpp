@@ -91,7 +91,18 @@ static uint8_t triangle(uint64_t time, uint32_t period) {
   const uint32_t t = uint32_t(time % period) * 510U / period;
   return uint8_t(t>255 ? 510-t : t);
 }
-Power render(const Settings& s, uint64_t ms, Rgb* out, size_t count, uint32_t budget) {
+bool validatePower(const PowerSettings& s,const char*& field) {
+  field="supplyWatts";
+  if(s.supplyWatts<1||s.supplyWatts>2000) return false;
+  field="ledMilliWatts";
+  if(s.ledMilliWatts<10||s.ledMilliWatts>10000) return false;
+  field=nullptr; return true;
+}
+uint32_t powerBudgetMa(const PowerSettings& s,uint32_t hardwareBudgetMa) {
+  const uint32_t supply=uint32_t(uint64_t(s.supplyWatts)*1000U*(100U-kPowerHeadroomPercent)/(100U*kLedSupplyVolts));
+  return supply<hardwareBudgetMa ? supply : hardwareBudgetMa;
+}
+Power render(const Settings& s,uint64_t ms,Rgb* out,size_t count,uint32_t budget,uint16_t ledMilliWatts) {
   Power p;
   if (!out || !count || count>kMaxLeds) return p;
   const Palette* pal = selectedPalette(s);
@@ -133,10 +144,16 @@ Power render(const Settings& s, uint64_t ms, Rgb* out, size_t count, uint32_t bu
     out[i]={uint8_t(c.r*level/255U),uint8_t(c.g*level/255U),uint8_t(c.b*level/255U)};
     sum+=out[i].r+out[i].g+out[i].b;
   }
-  // Conservative: 1mA idle per physical pixel + 20mA per full-scale channel.
-  p.requestedMa=uint32_t(count+(sum*20U+254U)/255U);
+  // Include 1mA standby per physical pixel; rated LED watts scale RGB demand.
+  constexpr uint32_t denominator=3U*255U*kLedSupplyVolts;
+  const auto demand=[&](uint64_t channels) {
+    return uint32_t(count+(channels*ledMilliWatts+denominator-1)/denominator);
+  };
+  p.requestedMa=demand(sum);
   const uint32_t idle=uint32_t(count);
-  const uint64_t allowance=budget>idle ? uint64_t(budget-idle)*255U/20U : 0;
+  p.standbyExceedsBudget=idle>budget;
+  const uint64_t allowance=budget>idle&&ledMilliWatts>=10&&ledMilliWatts<=10000
+    ? uint64_t(budget-idle)*denominator/ledMilliWatts : 0;
   if (sum>allowance) {
     p.limited=true;
     p.scalePermille=sum ? uint16_t(allowance*1000U/sum) : 1000;
@@ -148,7 +165,7 @@ Power render(const Settings& s, uint64_t ms, Rgb* out, size_t count, uint32_t bu
     sum=0;
     for (size_t i=0;i<count;++i) sum+=out[i].r+out[i].g+out[i].b;
   }
-  p.estimatedMa=uint32_t(count+(sum*20U+254U)/255U);
+  p.estimatedMa=demand(sum);
   return p;
 }
 ConnectResult connectionDecision(bool candidate, bool connected, uint32_t age) {

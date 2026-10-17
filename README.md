@@ -11,8 +11,10 @@ optional local-network/fallback interface.
 
 The app opens on **Lights** while it reconnects the remembered controller and
 checks for updates. On first use, it auto-connects only if one controller appears
-in the scan. **Connection** and **Updates** have separate tabs with orange **!**
-attention badges; missing Bluetooth or Internet never forces you away from Lights.
+in the scan. Lights stays visible with greyed-out, disabled controls offline.
+The top-right settings icon opens **Connection**, **Updates**, **Wi-Fi**, and
+**Device settings**. Orange **!** badges mark connection/update attention on the
+icon and relevant menu item; missing Bluetooth or Internet never changes pages.
 Firmware and Android app installation still require your approval.
 
 **Hardware status:** USB programming and startup were verified on the target
@@ -194,7 +196,10 @@ chase; see [the exact API](docs/API.md) for modulation controls.
 
 Preview changes only RAM. **Save** persists the entire validated configuration,
 including on/off, without rebooting the ESP. Themes, effects, brightness and
-other lighting controls do not need a restart. **Only a changed LED count needs
+other lighting controls do not need a restart. The app's count slider selects
+25..1000 LEDs in 25-LED increments; existing counts such as 1 or 333 stay unchanged
+until you move it. The firmware and web API still support every count from 1..1000.
+**Only a changed LED count needs
 Save followed by a manual restart** (paired BLE or authenticated HTTP).
 Status separately reports active,
 requested and saved counts, plus live/saved restart requirements and revisions.
@@ -208,17 +213,35 @@ are checked for internal memory before starting RMT. The adapter checks readines
 and schedules frames at 33ms intervals; it never allocates per animation frame.
 Allocation/initialization failure is visible as `led.ready:false`.
 
-All effects pass through brightness and proportional current scaling. The model
-is **1mA idle per physical pixel + 20mA per full-scale R/G/B channel**, rounded
-up. Status exposes requested and limited estimated mA and scale. Black output
-still has modeled idle current. This is a conservative estimate, not a reading.
+**Device settings → Power protection** stores the supply rating (default **60 W**)
+and full-brightness power per LED (default **0.3 W**) on the ESP. The embedded
+website exposes the same settings behind its admin login. Power Save is independent
+of lighting Save and applies immediately without a restart.
+
+Every effect uses calibrated proportional limiting: the smaller of **80% of
+supply wattage** and the compiled **9 A at 5 V (45 W)** ceiling. A 20 W supply
+therefore permits 16 W; the default 60 W supply remains capped at 45 W.
+The model adds **1 mA standby per physical pixel** to the configured RGB power,
+rounded up. Default calibration reproduces 20 mA per full-scale R/G/B channel.
+Status exposes rendered-frame requested/limited mA and scaling.
+
+Warnings use conservative full-white demand at the selected brightness, not an
+animation average, and retain the active count while a smaller count awaits
+restart. If standby alone exceeds the budget, RGB goes black but the physical
+supply/string must change. A corrupt or unreadable existing power record disables
+RGB until you verify and save a replacement; a missing record uses the default
+profile without replacing saved lighting. Older firmware still supports lighting,
+but the app explicitly disables unsupported power editing.
+
+These are estimates, not measurements, fuses, or an electrical cutoff. Black
+pixels still consume standby power. Verify actual ratings and use suitable wiring.
 At 1000 pixels wire transmission alone takes about 30ms. Target goals are ≥30FPS
 at 200 / ≥20FPS at 1000 and <250ms normal-LAN p95 acknowledgements; hardware
 measurement is required before stating they are achieved.
 
 ## Admin, recovery and trust boundary
 
-- HTTP administration protects Wi-Fi changes/scans, restart, logout, both
+- HTTP administration protects power settings, Wi-Fi changes/scans, restart, logout, both
   resets and **every** firmware upload phase. Lighting controls are deliberately
   trusted-LAN operations, with same-origin/custom-header protection.
 - BLE configuration uses bonded, encrypted no-PIN pairing instead of a web login.
@@ -253,7 +276,7 @@ build flags, source, URLs, ordinary exports, or browser persistent storage.
 
 ## Releases and phone updates
 
-The app's **Updates** tab works without an ESP connection for Android updates.
+The app's **Settings → Updates** page works without an ESP connection for Android updates.
 It checks published releases automatically without blocking Lights. Tap
 **Update Android app** to download a verified APK, then approve Android's
 installer. Allow **Install unknown apps** for Pixies if Android requests it.

@@ -13,6 +13,7 @@ class DeviceControl {
   void config(JsonDocument&);
   void status(JsonDocument&);
   void ledStatus(JsonObject);
+  void powerStatus(JsonObject);
   int execute(const char*,JsonVariantConst,JsonDocument&);
   void restartLater();
   bool resetAll();
@@ -25,5 +26,6 @@ class DeviceControl {
   String bootId;
   bool restarting=false;
   uint32_t restartAt=0;
+  uint32_t powerRevision=1;
   std::function<bool()> clearBonds;
 };

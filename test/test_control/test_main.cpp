@@ -110,11 +110,38 @@ void ota_busy_cannot_be_bypassed_over_ble() {
   Fixture f; f.control.ota.busy=true;
   TEST_ASSERT_EQUAL(409,f.preview(f.settings.live,1));
   TEST_ASSERT_EQUAL(409,f.call("config.save","{\"baseRevision\":1}"));
+  TEST_ASSERT_EQUAL(409,f.call("power.save","{\"baseRevision\":1,\"power\":{\"supplyWatts\":20,\"ledMilliWatts\":300}}"));
   TEST_ASSERT_EQUAL(409,f.call("wifi.scan"));
   TEST_ASSERT_EQUAL(409,f.call("wifi.connect","{\"ssid\":\"fixture\",\"password\":\"fixture-only-password\"}"));
   TEST_ASSERT_EQUAL(409,f.call("restart","{\"confirm\":\"restart\"}"));
   TEST_ASSERT_EQUAL(200,f.call("status"));
   TEST_ASSERT_TRUE(f.reply["update"]["busy"].as<bool>());
+}
+void power_saves_are_checked_independent_and_do_not_restart() {
+  Fixture f;
+  TEST_ASSERT_TRUE(f.leds.powerReady); TEST_ASSERT_EQUAL(9000,f.leds.powerBudgetMa());
+  TEST_ASSERT_EQUAL(422,f.call("power.save","{\"baseRevision\":1,\"power\":{\"supplyWatts\":0,\"ledMilliWatts\":300}}"));
+  TEST_ASSERT_EQUAL(400,f.call("power.save","{\"baseRevision\":1,\"power\":{\"supplyWatts\":20,\"ledMilliWatts\":300},\"extra\":true}"));
+  TEST_ASSERT_EQUAL(200,f.call("power.save","{\"baseRevision\":1,\"power\":{\"supplyWatts\":20,\"ledMilliWatts\":600}}"));
+  TEST_ASSERT_EQUAL(3200,f.leds.powerBudgetMa()); TEST_ASSERT_EQUAL(600,f.leds.powerSettings.ledMilliWatts);
+  TEST_ASSERT_EQUAL(2,f.reply["power"]["revision"].as<unsigned>());
+  TEST_ASSERT_FALSE(f.control.restarting); TEST_ASSERT_FALSE(f.settings.dirty());
+  TEST_ASSERT_EQUAL(1,f.settings.revision); TEST_ASSERT_EQUAL(200,f.settings.activeCount);
+  TEST_ASSERT_EQUAL(409,f.call("power.save","{\"baseRevision\":1,\"power\":{\"supplyWatts\":60,\"ledMilliWatts\":300}}"));
+  fake_nvs::failWrite=true;
+  TEST_ASSERT_EQUAL(500,f.call("power.save","{\"baseRevision\":2,\"power\":{\"supplyWatts\":60,\"ledMilliWatts\":300}}"));
+  TEST_ASSERT_EQUAL(3200,f.leds.powerBudgetMa()); TEST_ASSERT_EQUAL(2,f.control.powerRevision);
+  fake_nvs::failWrite=false;
+  TEST_ASSERT_EQUAL(200,f.call("config.save","{\"baseRevision\":1}"));
+  Fixture reboot;
+  TEST_ASSERT_EQUAL(3200,reboot.leds.powerBudgetMa()); TEST_ASSERT_EQUAL(600,reboot.leds.powerSettings.ledMilliWatts);
+  fake_nvs::records["px-settings/power"].back()^=1;
+  Fixture corrupt;
+  TEST_ASSERT_FALSE(corrupt.leds.powerReady); TEST_ASSERT_EQUAL(0,corrupt.leds.powerBudgetMa());
+  TEST_ASSERT_EQUAL(200,corrupt.call("status"));
+  TEST_ASSERT_EQUAL_STRING("invalid_record",corrupt.reply["power"]["recovery"].as<const char*>());
+  TEST_ASSERT_EQUAL(200,corrupt.call("power.save","{\"baseRevision\":1,\"power\":{\"supplyWatts\":10,\"ledMilliWatts\":300}}"));
+  TEST_ASSERT_TRUE(corrupt.leds.powerReady); TEST_ASSERT_EQUAL(1600,corrupt.leds.powerBudgetMa());
 }
 void network_validation_and_failed_persistence_keep_setup() {
   Fixture f;
@@ -386,6 +413,7 @@ void reconnect_cannot_replay_a_previous_pairing_session() {
 }
 int main() {
   UNITY_BEGIN(); RUN_TEST(common_defaults_and_sanitized_state);
+  RUN_TEST(power_saves_are_checked_independent_and_do_not_restart);
   RUN_TEST(led_diagnostics_reflect_active_hardware_and_live_settings);
   RUN_TEST(preview_save_failure_and_real_reboot_record);
   RUN_TEST(ota_busy_cannot_be_bypassed_over_ble);
