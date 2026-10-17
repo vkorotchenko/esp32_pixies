@@ -1,1 +1,213 @@
-# esp32_pixies
+# ESP32 Pixies
+
+Local, offline-capable controller for one 5V WS2812 serial string. PlatformIO
+Arduino firmware for **ESP32-S3-WROOM-1-N16R8**, a protected setup hotspot,
+palette/effect controls, explicit Save, and authenticated browser application OTA.
+
+**Status:** firmware compiles and native simulations exercise pure logic and
+selected adapters. The embedded UI is intentionally minimal; final frontend and
+independent review follow separately. No physical carrier, wiring, timing,
+network or OTA acceptance is asserted by a software build.
+
+## Build and test
+
+Requires Python/PlatformIO Core 6.2.0, a native C++17 compiler for tests, and Node
+24. No npm dependencies or production Node server.
+
+```sh
+pio test -e native
+npm test
+python3 scripts/check_build.py
+pio run -e esp32s3_n16r8
+python3 scripts/check_build.py .pio/build/esp32s3_n16r8/firmware.bin
+```
+
+If `pio` is not on PATH, use `~/.platformio/penv/bin/platformio` in its place.
+Only install PlatformIO if missing, preferably in a task-local virtualenv:
+
+```sh
+python3 -m venv .venv
+.venv/bin/python -m pip install platformio==6.2.0
+.venv/bin/pio run -e esp32s3_n16r8
+```
+
+Pinned inputs: `espressif32@7.1.3` (Arduino core 2.0.17 family),
+`NeoPixelBus@2.8.4`, `ArduinoJson@6.21.5`. The platform's framework/tool package
+patch build may vary within its compatible range; inspect the build's package
+list when reproducing a binary. CI uses the same build/test commands.
+
+The project board manifest deliberately replaces the misleading base N8/no-PSRAM
+profile: 16MB Quad flash, `qio_opi` memory, 8MB Octal PSRAM, 80MHz flash.
+`BOARD_HAS_PSRAM` is enabled. Status reports detected vs expected memory. The
+default USB configuration is native USB CDC (`ARDUINO_USB_MODE=1`,
+`ARDUINO_USB_CDC_ON_BOOT=1`); **confirm the actual carrier's USB wiring**. A
+USB-UART carrier may need a different console configuration.
+
+Partition layout (stable across browser updates):
+
+| Partition | Offset | Size |
+|---|---:|---:|
+| NVS | `0x9000` | `0x5000` |
+| OTA metadata | `0xE000` | `0x2000` |
+| app0 | `0x10000` | `0x700000` (7MiB) |
+| app1 | `0x710000` | `0x700000` (7MiB) |
+
+Unused tail is intentional; no filesystem is needed. The post-build gate checks
+alignment, overlap, flash bounds, app size, chip/flash header, app descriptor,
+exact segment/image length and appended SHA256. Three web assets are embedded
+in `firmware.bin`, so a single application upload updates UI and firmware.
+
+## Hardware verification gate
+
+N16R8 identifies a **module**, not the carrier pinout. Do not flash/wire based
+only on this profile. Confirm the carrier's schematic, exposed GPIOs, USB port,
+BOOT/RESET switches, module marking, memory detection and safe power path first.
+
+Build flags in `platformio.ini` / `include/config.h`:
+
+- `PIXIES_LED_PIN=4`: **provisional**, verify before wiring.
+- `PIXIES_COLOR_GRB=1`: GRB default; set 0 for RGB and do a low-brightness RGB test.
+- `PIXIES_CURRENT_MA=9000`: conservative estimated LED budget, configurable
+  downward to 1000mA; not a current sensor or electrical protection.
+- `PIXIES_RECOVERY_PIN=-1`: physical switch disabled until carrier verified.
+
+GPIO35/36/37 are occupied by Octal PSRAM. Native USB GPIO19/20 and strapping
+GPIO0/3/45/46 must not be blindly used for LEDs. Compile-time guards reject these
+common conflicts; they do not replace checking all carrier/module reserved pins.
+
+Use a suitable 3.3V-to-5V logic buffer, common ground, a series data resistor
+(typically 330–470Ω close to the first pixel), and appropriate bulk/input
+decoupling. Never apply 5V to an ESP32 GPIO. Feed power directly to the LED
+string with appropriate fused wiring and distributed injection, not through USB
+or a controller PCB trace. Prevent unintended USB/5V backfeed.
+
+The confirmed 5V/60W supply is nominally 12A total. An unrestricted 200-pixel
+white frame can approach 12A **before** controller/wiring losses. Do not use it
+as a test pattern. Software estimates cannot detect shorts, undervoltage, bad
+connections or undersized wiring. Measure current/voltage and inspect thermal
+behavior; use suitable real protection.
+
+## First boot and offline operation
+
+1. After confirming hardware, install by the carrier's normal USB procedure
+   (`pio run -e esp32s3_n16r8 -t upload`, only with explicit operator approval).
+2. Open the **local USB console**, 115200. The device prints
+   `Pixies-<12-hex-id>`, its unique generated WPA key, and `http://192.168.4.1`.
+   If the initial message was missed, send the line **`setup`** over USB to print
+   the AP information again. Do not publish/capture that key in logs.
+3. Join that protected AP. Its WPA key is random per boot, kept in RAM, never
+   returned by HTTP. There is no universal setup/admin password.
+4. Open `http://192.168.4.1` directly. Captive DNS helps some phones, but auto-open
+   behavior is OS-dependent. Disable automatic switching to another network if
+   the phone complains about no Internet.
+5. Claim a 12..64-byte admin password from the protected AP. **You may stay on
+   this AP and control lights without selecting a home router.**
+6. Optionally enter home Wi-Fi credentials. The controller checks the candidate
+   asynchronously, requiring an IP and stable association before checked NVS
+   persistence replaces the previous working credentials. Poll status for the
+   outcome, not just the POST's 202 response.
+7. After success the AP closes. Join the home LAN and use the unique
+   `http://pixies-<id>.local`, or the nonsecret IP printed locally over USB.
+   mDNS, guest network isolation, and captive behavior are not universal.
+
+Saved effects start without waiting for networking. Saved-router attempts are
+bounded to 15 seconds; router loss leads to a protected fallback AP and retries
+with 30-second backoff, **not** factory reset. Failed candidate connections keep
+the old credentials. All web assets work without Internet access.
+
+## Lighting, Save and power
+
+Defaults: 200 pixels, on, brightness 25%, Halloween green/orange, steady;
+speed/intensity/density 50%. Supported count 1..1000. Halloween and Christmas
+red/white/green are immutable. Up to ten custom named palettes, each 1..8 colors.
+Themes and effects are independent. Effects: steady, twinkle, candle, breathe,
+chase; see [the exact API](docs/API.md) for modulation controls.
+
+Preview changes only RAM. **Save** persists the entire validated configuration,
+including on/off. Count changes do not resize a running transport: Save, then
+request an authenticated explicit restart. Status separately reports active,
+requested and saved counts, plus live/saved restart requirements and revisions.
+Reboot always restores saved settings; unsaved previews disappear.
+
+The renderer uses fixed-lifetime RGB buffers, deterministic per-pixel variation,
+a wrap-safe elapsed clock and RMT channel 0. Both NeoPixelBus transport buffers
+are checked for internal memory before starting RMT. The adapter checks readiness
+and schedules frames at 33ms intervals; it never allocates per animation frame.
+Allocation/initialization failure is visible as `led.ready:false`.
+
+All effects pass through brightness and proportional current scaling. The model
+is **1mA idle per physical pixel + 20mA per full-scale R/G/B channel**, rounded
+up. Status exposes requested and limited estimated mA and scale. Black output
+still has modeled idle current. This is a conservative estimate, not a reading.
+At 1000 pixels wire transmission alone takes about 30ms. Target goals are ≥30FPS
+at 200 / ≥20FPS at 1000 and <250ms normal-LAN p95 acknowledgements; hardware
+measurement is required before stating they are achieved.
+
+## Admin, recovery and trust boundary
+
+- Shared authentication protects Wi-Fi changes/scans, restart, logout, both
+  resets and **every** firmware upload phase. Lighting controls are deliberately
+  trusted-LAN operations, with same-origin/custom-header protection.
+- Salted PBKDF2-HMAC-SHA256 verifier uses bundled mbedTLS, random RAM sessions,
+  login throttling, HttpOnly/SameSite cookies and CSRF. Credentials use a
+  separate NVS namespace from settings. Writes are checked and read back;
+  version/length/CRC/validation failures expose a recovery reason and defaults.
+- Wi-Fi reset preserves admin and lighting. Factory reset deliberately clears
+  all three. Both require login/CSRF and exact confirmation strings.
+- Optional **active-low physical recovery switch**: after verifying its carrier
+  wiring, configure `PIXIES_RECOVERY_PIN`. Input sampling begins three seconds
+  after boot; hold LOW for ten continuous seconds for factory recovery.
+  GPIO0/BOOT may be explicitly selected only after carrier confirmation:
+  press it **after normal boot**. Holding it while resetting retains the ROM
+  download-mode behavior and does not run this gesture. Default is disabled.
+- With physical recovery disabled, lost admin credentials require the documented
+  **USB ROM recovery/erase-and-reflash procedure** for the actual carrier.
+  A full flash erase removes saved lighting, Wi-Fi/admin, and OTA state.
+  Reinstall the bootloader, partition table and app through PlatformIO after
+  erasing. This is intentionally destructive and must be operator-approved.
+
+**Security limitations:** HTTP is not TLS. LAN observers/attackers can see
+traffic; AP WPA does not provide end-to-end HTTPS. NVS encryption is not enabled
+automatically. Authenticated OTA is not signed firmware, secure boot,
+anti-rollback, or a defense against a compromised admin/LAN/physical attacker.
+Do not expose this device through Internet forwarding. No credentials in
+build flags, source, URLs, ordinary exports, or browser persistent storage.
+
+## Browser OTA and USB recovery
+
+Use the **application-only** `.pio/build/esp32s3_n16r8/firmware.bin`.
+Login, choose that file, upload. Do not upload a merged flash image, bootloader
+or partition table. Firmware and UI update together. The exact raw upload
+headers/format and response handling are in [docs/API.md](docs/API.md).
+
+LEDs deliberately go black during OTA. The inactive partition is written in
+bounded chunks; declared/received/parsed image lengths, target header and IDF
+image integrity/finalization checks must pass before selecting the boot slot.
+Failure resumes the live preview. Saved NVS is preserved. Conflicting changes
+are blocked, and restart occurs only after the success response.
+
+Interrupted or invalid transfers do not select an incomplete image. This is
+**not automatic rollback after a valid image starts and boot-loops**. Rollback
+has not been enabled or promised without compatible bootloader support.
+USB remains the recovery path. Partition/layout changes require USB installation,
+not browser OTA; retain this partition table across ordinary updates.
+
+## Source map and acceptance still needed
+
+- `lib/PixiesCore`: pure settings, strict JSON schema adapter, render/current
+  limiting, record/image checks, throttling and connection decisions.
+- `src`: checked Preferences storage, RMT output, cooperative Wi-Fi/AP/DNS,
+  bounded WebServer receiver, shared admin/API and inactive-slot OTA.
+- `test`: pure tests and real storage/HTTP/OTA adapters with narrow native fakes.
+  These test branch decisions, not physical flash reliability or radio behavior.
+- `web`: minimal integration UI and Node header/upload tests. The frontend
+  specialist should replace assets while retaining this contract and adding
+  full UI logic tests. `docs/config.schema.json` is the settings schema.
+
+Physical acceptance checklist: verify carrier/pins/memory; low-brightness RGB
+order test; all effects at 200 pixels and offline; measured supply current and
+voltage; saved vs unsaved behavior across power loss; 1000-pixel buffering and
+physical timing; async scans/candidate failures/router loss; AP-only operation;
+login/session/CSRF behavior; successful/failed/unauthorized/truncated/wrong-chip
+OTA, interrupt/power-loss testing and USB recovery. Do not describe simulated
+maximum length as a tested 1000-pixel physical string.

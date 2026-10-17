@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#10251f">
+  <meta name="color-scheme" content="dark">
+  <title>Pixies · a little everyday magic</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath fill='%23c7efad' d='M16 1l4 11 11 4-11 4-4 11-4-11L1 16l11-4z'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="/styles.css">
+  <script type="module" src="/app.js"></script>
+</head>
+<body>
+  <a class="skip-link" href="#lighting">Skip to lighting controls</a>
+  <header class="site-header">
+    <a class="brand" href="#lighting" aria-label="Pixies home"><span class="brand-mark" aria-hidden="true">✧</span><span>pixies<small>A LITTLE EVERYDAY MAGIC</small></span></a>
+    <div class="connection"><span id="connection-dot" class="status-dot"></span><span id="connection-label" role="status">Finding your lights…</span><button id="refresh" class="icon-button" aria-label="Refresh device connection">↻</button></div>
+  </header>
+  <nav class="section-nav" aria-label="Page sections">
+    <a href="#lighting">Lighting</a><a href="#palettes">My palettes</a><a href="#network">Network</a><a href="#device">Device &amp; settings</a>
+  </nav>
+  <main>
+    <div id="notice" class="notice" role="status" aria-live="polite" hidden></div>
+    <div id="error" class="notice danger" role="alert" hidden></div>
+    <section id="conflict" class="notice warning" aria-labelledby="conflict-title" hidden>
+      <h2 id="conflict-title">Your draft is safe. The device needs a decision.</h2>
+      <p id="conflict-detail"></p><p id="conflict-comparison" class="small"></p>
+      <div class="button-row"><button id="keep-draft">Apply my draft to this device</button><button id="use-device" class="secondary">Use device settings instead</button></div>
+      <p class="small">Applying your draft replaces the complete live configuration, including palettes. It does not Save.</p>
+    </section>
+    <section id="lighting" class="lighting-grid" aria-labelledby="lighting-title">
+      <div class="hero card">
+        <div class="eyebrow">YOUR OWN LITTLE LIGHT SHOW</div>
+        <div class="title-row"><h1 id="lighting-title">Make the night<br>a little brighter.</h1><label class="power-switch"><input id="on" type="checkbox" role="switch" data-light-control disabled aria-describedby="power-label"><span class="switch-track" aria-hidden="true"></span><span id="power-label">Power unknown</span></label></div>
+        <div id="light-scene" class="light-scene" aria-hidden="true"><div id="light-string" class="light-string"></div><div class="scene-caption">a preview of your palette</div></div>
+        <div class="scene-summary"><span><strong id="scene-palette">Waiting for device</strong><small id="scene-effect">Live controls · no cloud needed</small></span><span id="scene-brightness" class="large-number">—</span></div>
+        <p class="small">The illustration shows colors, not actual pixel output. Your device is the source of truth.</p>
+      </div>
+      <section class="card controls" aria-labelledby="controls-title">
+        <div class="section-heading"><div><div class="eyebrow">FIND YOUR GLOW</div><h2 id="controls-title">Light &amp; movement</h2></div><span class="pill">Live preview</span></div>
+        <label class="range-label" for="brightness">Brightness <output id="brightness-value" for="brightness">—</output></label>
+        <input id="brightness" type="range" min="0" max="100" step="1" data-light-control disabled aria-describedby="brightness-help">
+        <p id="brightness-help" class="help">Starts at 25%. Higher requests remain subject to the device's current budget.</p>
+        <label for="effect">Effect</label><select id="effect" data-light-control disabled aria-describedby="effect-help">
+          <option value="steady">Steady · a constant glow</option><option value="twinkle">Twinkle · scattered sparkle</option><option value="candle">Candle · gentle flicker</option><option value="breathe">Breathe · a slow pulse</option><option value="chase">Chase · moving color</option>
+        </select>
+        <p id="effect-help" class="help">Themes and movement are independent. Pick any combination.</p>
+        <div class="effect-sliders">
+          <div><label class="range-label" for="speed">Speed <output id="speed-value" for="speed">—</output></label><input id="speed" type="range" min="0" max="100" step="1" data-light-control disabled><p class="help">Higher is faster.</p></div>
+          <div><label class="range-label" for="intensity">Intensity <output id="intensity-value" for="intensity">—</output></label><input id="intensity" type="range" min="0" max="100" step="1" data-light-control disabled><p class="help">Depth of the flicker or modulation.</p></div>
+          <div><label class="range-label" for="density">Density <output id="density-value" for="density">—</output></label><input id="density" type="range" min="0" max="100" step="1" data-light-control disabled><p class="help">Positions active or modulated.</p></div>
+        </div>
+        <p id="effect-usage" class="help"></p>
+        <div id="power-status" class="power-status" role="status">Waiting for current estimate…</div>
+      </section>
+      <section class="card themes" aria-labelledby="themes-title">
+        <div class="section-heading"><div><div class="eyebrow">SET THE MOOD</div><h2 id="themes-title">A color for every season</h2></div><a href="#palettes" class="text-link">Make it yours ↓</a></div>
+        <fieldset id="theme-fieldset" disabled><legend class="sr-only">Choose a theme independently of the effect</legend><div id="theme-options" class="theme-grid"></div></fieldset>
+      </section>
+    </section>
+    <section id="palettes" class="card section-space" aria-labelledby="palettes-title">
+      <div class="section-heading"><div><div class="eyebrow">YOUR COLORS, YOUR WAY</div><h2 id="palettes-title">My palettes <span id="palette-count" class="muted">0 / 10</span></h2></div><button id="new-palette" class="secondary" data-light-control disabled>+ New palette</button></div>
+      <p class="help">Give a palette a name and 1–8 RGB colors. Editing previews in RAM; Save keeps it after power-off. Seasonal themes stay unchanged.</p>
+      <div id="custom-palette-list" class="custom-palette-list"><p class="empty-state">Your own colors belong here. Create a palette to get started.</p></div>
+    </section>
+    <section id="network" class="section-space" aria-labelledby="network-title">
+      <div class="section-heading"><div><div class="eyebrow">HAPPILY OFFLINE</div><h2 id="network-title">At home, or on the hotspot</h2></div><span id="network-badge" class="pill">Unknown</span></div>
+      <div class="settings-grid">
+        <section class="card" aria-labelledby="admin-title">
+          <h3 id="admin-title">Device admin</h3><p id="auth-state" role="status">Checking admin session…</p>
+          <p class="help">Lighting is available to your trusted network. Wi-Fi, restarts, resets and updates need admin access. One 30-minute session per device; a new login signs out the old session.</p>
+          <form id="auth-form" novalidate>
+            <label for="password" id="password-label">Admin password</label><input id="password" type="password" autocomplete="current-password" maxlength="128" aria-describedby="password-error"><span id="password-error" class="field-error"></span>
+            <div id="confirm-password-row" hidden><label for="confirm-password">Repeat your new password</label><input id="confirm-password" type="password" autocomplete="new-password" maxlength="128" aria-describedby="confirm-password-error"><span id="confirm-password-error" class="field-error"></span></div>
+            <button id="authenticate" type="submit" disabled>Sign in</button>
+          </form>
+          <button id="logout" class="secondary" hidden>Sign out</button>
+          <p id="claim-help" class="notice subtle" hidden>Create your first admin password while connected to the protected Pixies hotspot. Its unique Wi-Fi key is shown over USB serial, not on this page. You can then join your home network or keep using the hotspot.</p>
+          <button id="stay-ap" class="text-button" hidden>Stay AP-only and control my lights ↑</button>
+        </section>
+        <section class="card" aria-labelledby="wifi-title">
+          <h3 id="wifi-title">Home network</h3>
+          <dl id="network-details" class="data-list"><div><dt>Connection</dt><dd>Waiting for device</dd></div></dl>
+          <p id="network-error" class="field-error" role="status"></p>
+          <p class="help" id="network-help">No router or Internet is required. Wi-Fi settings are only saved after a successful connection test.</p>
+          <button id="scan" class="secondary" data-admin disabled>Find nearby networks</button><span id="scan-state" class="small" role="status"></span>
+          <div id="scan-results" class="scan-results"></div>
+          <form id="wifi-form" novalidate>
+            <label for="ssid">Network name (SSID)</label><input id="ssid" type="text" autocomplete="off" autocapitalize="none" spellcheck="false" maxlength="64" data-admin disabled aria-describedby="ssid-error"><span id="ssid-error" class="field-error"></span>
+            <label for="wifi-password">Wi-Fi password <span class="muted">(empty for open networks)</span></label><input id="wifi-password" type="password" autocomplete="off" maxlength="128" data-admin disabled aria-describedby="wifi-password-error"><span id="wifi-password-error" class="field-error"></span>
+            <button id="connect" type="submit" data-admin disabled>Test &amp; save network</button>
+          </form>
+          <p class="help">The hotspot closes after a stable home connection. Join that network on your phone, then use the device's .local name or USB-reported IP. If Wi-Fi fails, lighting continues and the protected fallback hotspot opens.</p>
+          <a id="device-link" class="text-link" hidden></a>
+        </section>
+      </div>
+    </section>
+    <section id="device" class="section-space" aria-labelledby="device-title">
+      <div class="section-heading"><div><div class="eyebrow">THE SMALL PRINT, MADE SIMPLE</div><h2 id="device-title">Device &amp; settings</h2></div></div>
+      <div class="settings-grid">
+        <section class="card" aria-labelledby="string-title">
+          <h3 id="string-title">One string. A thousand possibilities.</h3>
+          <p class="help">One 5 V WS2812 string, 1–1,000 pixels. Length changes are preview settings until Saved. An explicit admin restart then changes the active driver.</p>
+          <form id="count-form" novalidate><label for="led-count">Requested pixel count</label><div class="input-button"><input id="led-count" type="number" min="1" max="1000" step="1" inputmode="numeric" data-light-control disabled aria-describedby="led-count-error"><button id="apply-count" class="secondary" type="submit" data-light-control disabled>Set preview count</button></div><span id="led-count-error" class="field-error"></span></form>
+          <dl class="count-grid"><div><dt>Active now</dt><dd id="active-count">—</dd></div><div><dt>Requested</dt><dd id="requested-count">—</dd></div><div><dt>Saved for boot</dt><dd id="saved-count">—</dd></div></dl>
+          <p id="restart-state" class="notice subtle">Loading pixel count…</p>
+          <button id="restart" class="secondary" data-admin disabled>Restart device…</button>
+          <dl id="hardware-details" class="data-list"></dl>
+          <p class="help">Current is an estimate, not electrical protection. Use fused 5 V power, appropriate wiring and power injection; verify your carrier's pinout. Do not connect 5 V to an ESP32 GPIO.</p>
+        </section>
+        <section class="card" aria-labelledby="firmware-title">
+          <h3 id="firmware-title">A fresh little spark</h3>
+          <p id="firmware-version" class="version">Firmware —</p>
+          <p class="help">Upload the app-only <code>firmware.bin</code> built for <code>esp32s3_n16r8</code>. The website updates with it. Not a merged image, bootloader, partitions or filesystem. Keep this page open; LEDs pause during writing.</p>
+          <form id="update-form" novalidate>
+            <label for="firmware">Application firmware.bin</label><input id="firmware" type="file" accept=".bin,application/octet-stream" data-admin disabled aria-describedby="firmware-error firmware-help"><span id="firmware-error" class="field-error"></span>
+            <p id="firmware-help" class="help">Waiting for the device's OTA slot size.</p><p id="file-detail" class="small"></p>
+            <button id="update" type="submit" data-admin disabled>Upload &amp; restart…</button>
+          </form>
+          <div id="update-progress-row" hidden><label for="upload-progress">Transfer to device</label><progress id="upload-progress" max="100" value="0"></progress><p id="update-detail" role="status" aria-live="polite"></p></div>
+          <p id="device-update-state" class="small"></p><button id="reload-ui" class="secondary" hidden>Reload the embedded website</button><button id="resume-current" class="secondary" hidden>Resume on current device (operation unverified)…</button>
+          <p class="help">A completed transfer is not a verified boot. This page waits for a new boot ID and running version. No signed-firmware, HTTPS or automatic boot-rollback guarantee. Retain USB recovery.</p>
+        </section>
+        <section class="card" aria-labelledby="health-title">
+          <h3 id="health-title">Under the fairy lights</h3><dl id="device-details" class="data-list"></dl>
+          <p id="recovery-state" class="notice warning" hidden></p>
+          <p class="help">Status is refreshed every 4 seconds. Polling pauses during uploads; transfer progress comes from your browser.</p>
+        </section>
+        <section class="card danger-zone" aria-labelledby="reset-title">
+          <h3 id="reset-title">A deliberate fresh start</h3><p class="help">Wi-Fi reset preserves admin and lighting. Factory reset erases saved lighting, networks and admin. Both require confirmation.</p>
+          <div class="button-row"><button id="wifi-reset" class="secondary" data-admin disabled>Reset Wi-Fi…</button><button id="factory-reset" class="danger-button" data-admin disabled>Factory reset…</button></div>
+          <p class="help">If locked out, use the documented USB recovery procedure. There is no universal admin password.</p>
+        </section>
+      </div>
+    </section>
+    <aside class="trust-note"><strong>Local by design. Trusted network only.</strong> This device uses HTTP: passwords, admin requests and uploads are not encrypted in transit. The hotspot is password-protected; keep the LAN trusted. Do not port-forward Pixies to the Internet. No cloud, no external assets, no browser-stored passwords or tokens.</aside>
+  </main>
+  <footer class="save-bar" aria-label="Save lighting settings">
+    <div><strong id="save-state" role="status" aria-live="polite">Connecting…</strong><small id="save-detail">Loading authoritative device settings</small></div>
+    <div class="button-row"><button id="discard" class="text-button" disabled>Discard my local draft</button><button id="save" disabled>Save to device <span aria-hidden="true">✦</span></button></div>
+  </footer>
+  <dialog id="palette-dialog" aria-labelledby="palette-dialog-title">
+    <form id="palette-form" novalidate>
+      <div class="section-heading"><h2 id="palette-dialog-title">Create a palette</h2><button type="button" id="cancel-palette" class="icon-button" aria-label="Close palette editor">×</button></div>
+      <p class="help">Your palette is a set of colors, not an effect. Add it to the live preview, then Save when you're happy.</p>
+      <label for="palette-name">Palette name</label><input id="palette-name" type="text" maxlength="32" required aria-describedby="palette-name-error" autocomplete="off"><span id="palette-name-error" class="field-error"></span>
+      <fieldset><legend>RGB colors <span id="color-count" class="muted"></span></legend><div id="palette-colors"></div></fieldset>
+      <p id="palette-colors-error" class="field-error" role="status"></p><button id="add-color" class="secondary" type="button">+ Add color</button>
+      <div class="dialog-actions"><button type="button" id="cancel-palette-bottom" class="text-button">Cancel</button><button id="apply-palette" type="submit">Use in live preview</button></div>
+    </form>
+  </dialog>
+  <dialog id="confirm-dialog" aria-labelledby="confirm-title" aria-describedby="confirm-detail">
+    <h2 id="confirm-title">Are you sure?</h2><p id="confirm-detail"></p>
+    <div class="dialog-actions"><button id="confirm-cancel" class="secondary" autofocus>Cancel</button><button id="confirm-save" hidden>Save, then continue</button><button id="confirm-proceed">Continue</button></div>
+  </dialog>
+  <noscript><div class="notice danger">Pixies needs JavaScript for local controls. Nothing is loaded from the Internet.</div></noscript>
+</body>
+</html>

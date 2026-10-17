@@ -1,0 +1,30 @@
+{
+  "name": "ESP32-S3 WROOM N16R8 (16MB Quad flash / 8MB Octal PSRAM; carrier unverified)",
+  "vendor": "Espressif",
+  "url": "https://www.espressif.com/en/products/modules/esp32-s3",
+  "frameworks": ["arduino"],
+  "connectivity": ["wifi", "bluetooth"],
+  "build": {
+    "arduino": {
+      "ldscript": "esp32s3_out.ld",
+      "memory_type": "qio_opi"
+    },
+    "core": "esp32",
+    "mcu": "esp32s3",
+    "variant": "esp32s3",
+    "f_cpu": "240000000L",
+    "f_flash": "80000000L",
+    "flash_mode": "qio",
+    "psram_type": "opi",
+    "extra_flags": ["-DARDUINO_ESP32S3_DEV", "-DARDUINO_RUNNING_CORE=1", "-DARDUINO_EVENT_RUNNING_CORE=1"],
+    "hwids": [["0x303A", "0x1001"]]
+  },
+  "upload": {
+    "flash_size": "16MB",
+    "maximum_size": 16777216,
+    "maximum_ram_size": 327680,
+    "require_upload_port": true,
+    "speed": 460800
+  },
+  "debug": { "default_tool": "esp-builtin", "onboard_tools": ["esp-builtin"], "openocd_target": "esp32s3.cfg" }
+}

@@ -1,0 +1,35 @@
+name: Firmware and local UI
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - name: Install pinned build runner
+        run: python -m pip install platformio==6.2.0
+      - name: Native core and adapter tests
+        run: pio test -e native
+      - name: Browser logic tests (no npm dependencies)
+        run: npm test
+      - name: Partition table checks
+        run: python scripts/check_build.py
+      - name: Compile N16R8 target and embedded website
+        run: pio run -e esp32s3_n16r8
+      - name: Real-framework adapter sanitizer regression proofs
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes clang libclang-rt-dev
+          CC=/usr/bin/clang CXX=/usr/bin/clang++ python scripts/test_adapters.py --prove-regressions
+      - name: Check actual app image, hash, and OTA slot bounds
+        run: python scripts/check_build.py .pio/build/esp32s3_n16r8/firmware.bin
