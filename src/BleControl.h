@@ -23,7 +23,7 @@ class BleControl : private NimBLEServerCallbacks, private NimBLECharacteristicCa
   QueueHandle_t queue_=nullptr;
   std::atomic<uint16_t> connection_{BLE_HS_CONN_HANDLE_NONE};
   std::atomic<uint32_t> generation_{0};
-  std::atomic<bool> subscribed_{false},overflow_{false};
+  std::atomic<bool> subscribed_{false},secured_{false},overflow_{false};
   uint32_t seenGeneration_=0,sentAt_=0,txStarted_=0;
   pixies::ble::Receiver receiver_;
   std::array<uint8_t,pixies::ble::kMaxMessage> response_{};

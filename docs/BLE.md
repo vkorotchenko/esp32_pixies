@@ -17,6 +17,11 @@ is required. Only encrypted bonded peers can submit commands. No-PIN pairing
 does not establish ownership or resist an active MITM during pairing. Any nearby
 phone may attempt to pair. Do not expose HTTP to the Internet.
 
+Encryption can become active before the first bond finishes exchanging keys.
+The firmware queues encrypted writes during that interval and processes them
+only after successful encrypted/bonded authentication. Pairing failure or
+disconnect never executes those queued commands.
+
 ## Packet framing
 
 Integers are unsigned little-endian. Each write/notification is **at most**

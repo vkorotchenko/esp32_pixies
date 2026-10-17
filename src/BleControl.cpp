@@ -41,30 +41,43 @@ void BleControl::onConnect(NimBLEServer* server,NimBLEConnInfo& info) {
   if(!connection_.compare_exchange_strong(expected,info.getConnHandle())) {
     server->disconnect(info); return;
   }
-  generation_.fetch_add(1); subscribed_=false;
-  if(!NimBLEDevice::startSecurity(info.getConnHandle())) {
-    Serial.println("BLE security could not start; disconnecting.");
+  generation_.fetch_add(1); subscribed_=false; secured_=false;
+  Serial.printf("BLE connected: handle=%u, encrypted=%u, bonded=%u\n",
+    info.getConnHandle(),info.isEncrypted(),info.isBonded());
+  int securityResult=0;
+  if(!NimBLEDevice::startSecurity(info.getConnHandle(),&securityResult)) {
+    Serial.printf("BLE security could not start: rc=%d; disconnecting.\n",securityResult);
     server->disconnect(info);
   }
 }
-void BleControl::onDisconnect(NimBLEServer*,NimBLEConnInfo& info,int) {
+void BleControl::onDisconnect(NimBLEServer*,NimBLEConnInfo& info,int reason) {
+  Serial.printf("BLE disconnected: handle=%u, reason=%d\n",info.getConnHandle(),reason);
   if(connection_==info.getConnHandle()) {
-    connection_=BLE_HS_CONN_HANDLE_NONE; subscribed_=false; generation_.fetch_add(1);
+    connection_=BLE_HS_CONN_HANDLE_NONE; subscribed_=false; secured_=false; generation_.fetch_add(1);
   }
 }
 void BleControl::onAuthenticationComplete(NimBLEConnInfo& info) {
+  Serial.printf("BLE security completed: handle=%u, encrypted=%u, bonded=%u, keyBytes=%u\n",
+    info.getConnHandle(),info.isEncrypted(),info.isBonded(),info.getSecKeySize());
+  if(connection_!=info.getConnHandle()) return;
   if(!info.isEncrypted()||!info.isBonded()) {
+    secured_=false;
     Serial.println("BLE pairing was not completed; disconnecting.");
     server_->disconnect(info);
-  }
+  } else secured_=true;
 }
 void BleControl::onSubscribe(NimBLECharacteristic*,NimBLEConnInfo& info,uint16_t value) {
+  Serial.printf("BLE notifications: handle=%u, enabled=%u\n",info.getConnHandle(),value&1);
   if(connection_==info.getConnHandle()) subscribed_=(value&1)!=0;
 }
 void BleControl::onWrite(NimBLECharacteristic* characteristic,NimBLEConnInfo& info) {
-  if(!info.isEncrypted()||!info.isBonded()||connection_!=info.getConnHandle()) {
+  if(!info.isEncrypted()||connection_!=info.getConnHandle()) {
+    Serial.printf("BLE write rejected: handle=%u, encrypted=%u, bonded=%u\n",
+      info.getConnHandle(),info.isEncrypted(),info.isBonded());
     server_->disconnect(info); return;
   }
+  // ATT encryption can be active while SMP is still exchanging bond keys.
+  // Queue these writes; tick() executes nothing until authentication completes.
   const auto& value=characteristic->getValue();
   Frame frame{}; frame.generation=generation_; frame.size=value.size();
   if(!queue_||frame.size>sizeof frame.bytes) { overflow_=true; return; }
@@ -137,6 +150,7 @@ void BleControl::tick(uint32_t now) {
     }
     return;
   }
+  if(!secured_) return;
   if(responseSize_) {
     if(pixies::elapsed(now,txStarted_,pixies::ble::kTimeoutMs)) {
       Serial.println("BLE response timed out; disconnecting.");
