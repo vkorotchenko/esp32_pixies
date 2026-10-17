@@ -293,7 +293,7 @@ void WebApi::begin() {
     memcpy(candidate.ssid,ssid.c_str(),ssid.length()+1);
     memcpy(candidate.password,password.c_str(),password.length()+1);
     memset(const_cast<char*>(password.c_str()),0,password.length());
-    const bool ok=network_.connectCandidate(candidate); memset(&candidate,0,sizeof candidate);
+    const bool ok=network_.connectCandidate(candidate); candidate={};
     if(!ok) { error(409,"busy","Another Wi-Fi operation is active"); return; }
     doc.clear(); doc["state"]="connecting"; json(202,doc);
   });

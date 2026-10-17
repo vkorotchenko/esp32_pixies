@@ -84,7 +84,7 @@ void NetworkManager::tick(uint32_t now) {
   if(candidateBusy&&attempting_&&
       pixies::connectionDecision(true,false,uint32_t(now-attemptAt_))==pixies::ConnectResult::FailedCandidate) {
     candidateBusy=false; candidateState="failed"; error="connection_failed";
-    memset(&candidate_,0,sizeof candidate_); openAp(); startSaved(); return;
+    candidate_={}; openAp(); startSaved(); return;
   }
   const bool connected=WiFi.status()==WL_CONNECTED&&WiFi.localIP()!=IPAddress(0,0,0,0);
   if(connected&&!candidateBusy&&(!wifiSaved||WiFi.SSID()!=saved_.ssid)) {
@@ -97,10 +97,10 @@ void NetworkManager::tick(uint32_t now) {
     if(candidateBusy && pixies::elapsed(now,connectedAt_,1000)) {
       if(store_.saveWifi(candidate_)) {
         saved_=candidate_; wifiSaved=true; candidateState="succeeded"; error="";
-        candidateBusy=false; memset(&candidate_,0,sizeof candidate_);
+        candidateBusy=false; candidate_={};
       } else {
         error="storage_failed"; candidateState="failed"; candidateBusy=false;
-        memset(&candidate_,0,sizeof candidate_); timingConnection_=false; startSaved(); return;
+        candidate_={}; timingConnection_=false; startSaved(); return;
       }
     }
     if(!candidateBusy) {
@@ -124,7 +124,7 @@ void NetworkManager::tick(uint32_t now) {
     const auto result=pixies::connectionDecision(candidateBusy,false,uint32_t(now-attemptAt_));
     if(result==pixies::ConnectResult::FailedCandidate) {
       candidateBusy=false; candidateState="failed"; error="connection_failed";
-      memset(&candidate_,0,sizeof candidate_); openAp(); startSaved();
+      candidate_={}; openAp(); startSaved();
     } else if(result==pixies::ConnectResult::Fallback) {
       attempting_=false; state="fallback_ap"; openAp();
       retryAt_=now; retryPending_=true;
@@ -145,7 +145,7 @@ bool NetworkManager::resetWifi() {
   if(operationBusy()) return false;
   if(!store_.resetWifi()) return false;
   wifiSaved=false; candidateBusy=false; attempting_=false; retryPending_=false; wasConnected_=false;
-  memset(&saved_,0,sizeof saved_); memset(&candidate_,0,sizeof candidate_);
+  saved_={}; candidate_={};
   WiFi.scanDelete(); scanState="idle";
   candidateState="idle"; error=""; openAp();
   // Credential erase is complete; defer STA disconnect until response is sent.

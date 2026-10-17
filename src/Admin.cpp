@@ -29,7 +29,7 @@ bool Admin::claim(const String& password) {
   esp_fill_random(temp.salt,sizeof temp.salt);
   const bool ok=derive(password,temp,temp.hash)&&store_.saveAdmin(temp);
   if(ok) { verifier_=temp; configured=true; newSession(millis()); }
-  memset(&temp,0,sizeof temp); return ok;
+  temp={}; return ok;
 }
 void Admin::newSession(uint32_t now) { session_=randomHex(32); csrf_=randomHex(32); sessionAt_=now; }
 uint32_t Admin::retryAfter(uint32_t now) const {

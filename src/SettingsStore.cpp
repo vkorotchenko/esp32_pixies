@@ -75,7 +75,7 @@ bool SettingsStore::loadWifi(WifiCredential& wifi) {
     if(ready_&&credentials_.isKey("wifi")) credentialRecovery="invalid_wifi_record";
     return false;
   }
-  wifi=temp; memset(&temp,0,sizeof temp); return true;
+  wifi=temp; temp={}; return true;
 }
 bool SettingsStore::saveWifi(const WifiCredential& wifi) {
   return write(credentials_,"wifi",reinterpret_cast<const uint8_t*>(&wifi),sizeof wifi);
