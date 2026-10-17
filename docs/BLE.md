@@ -2,8 +2,11 @@
 
 BLE is the normal local control/provisioning path on ESP32-S3. Bluetooth Classic
 is not supported. Advertisements contain the service UUID below; the scan response
-contains `Pixies-<device-id>`. Discover by service, not by an assumed MAC/name.
-One phone controls a connection; disconnect to switch phones.
+contains the friendly name `pixies`; the GAP device name matches. Discover by
+service, not by an assumed MAC/name. Controllers share this friendly name;
+connection and reconnection retain the native device ID. Wi-Fi hotspot and
+hostname suffixes remain unchanged. One phone controls a connection; disconnect
+to switch phones.
 
 | Item | UUID | Properties |
 | --- | --- | --- |

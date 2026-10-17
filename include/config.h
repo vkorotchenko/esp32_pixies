@@ -16,6 +16,7 @@
 #define PIXIES_RECOVERY_PIN -1
 #endif
 #define PIXIES_TARGET "esp32s3_n16r8"
+#define PIXIES_BLE_NAME "pixies"
 // Carrier unconfirmed: a deliberately opted-in, active-low recovery input.
 // Never assign PSRAM/USB/strapping pins without verifying the actual carrier.
 static_assert(PIXIES_LED_WS2811 == 0 || PIXIES_LED_WS2811 == 1, "Select WS2811 (1) or WS2812x (0)");

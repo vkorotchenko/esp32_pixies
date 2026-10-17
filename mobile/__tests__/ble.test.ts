@@ -87,10 +87,10 @@ test('Android 12+ asks only for scan/connect and scans by the Pixies service', a
     expect.any(Function),
   );
   const callback = mockManager.startDeviceScan.mock.calls[0][2];
-  callback(null, { id: 'controller', localName: 'Pixies', rssi: -55 });
+  callback(null, { id: 'controller', localName: 'Pixies-0123456789ab', name: 'Cached old name', rssi: -55 });
   expect(found).toHaveBeenCalledWith({
     id: 'controller',
-    name: 'Pixies',
+    name: 'pixies',
     rssi: -55,
   });
   await jest.advanceTimersByTimeAsync(10000);

@@ -2,6 +2,7 @@
 // Drive the production BLE callbacks with the SDK's separate encryption/bond
 // states. No radio, encryption, or pairing implementation is simulated here.
 #include <cstdint>
+#include <string>
 #include <vector>
 
 constexpr uint16_t BLE_HS_CONN_HANDLE_NONE=0xffff;
@@ -66,24 +67,27 @@ class NimBLEServer {
 };
 class NimBLEAdvertisementData {
  public:
+  std::string name;
   bool setFlags(unsigned) { return true; }
   bool addServiceUUID(const char*) { return true; }
-  bool setName(const char*) { return true; }
+  bool setName(const char* value) { name=value; return true; }
 };
 class NimBLEAdvertising {
  public:
+  std::string scanName;
   void enableScanResponse(bool) {}
   bool setAdvertisementData(const NimBLEAdvertisementData&) { return true; }
-  bool setScanResponseData(const NimBLEAdvertisementData&) { return true; }
+  bool setScanResponseData(const NimBLEAdvertisementData& data) { scanName=data.name; return true; }
   bool start() { return true; }
 };
 class NimBLEDevice {
  public:
   static inline bool initialized=false;
+  static inline std::string name;
   static inline NimBLEServer server;
   static inline NimBLEAdvertising advertising;
   static bool isInitialized() { return initialized; }
-  static bool init(const char*) { initialized=true; return true; }
+  static bool init(const char* value) { name=value; initialized=true; return true; }
   static bool deinit(bool) { initialized=false; return true; }
   static bool setMTU(uint16_t) { return true; }
   static void setSecurityAuth(bool,bool,bool) {}
@@ -93,5 +97,5 @@ class NimBLEDevice {
   static unsigned getNumBonds() { return 0; }
   static NimBLEServer* createServer() { return &server; }
   static NimBLEAdvertising* getAdvertising() { return &advertising; }
-  static void resetForTest() { initialized=false; server=NimBLEServer{}; }
+  static void resetForTest() { initialized=false; name.clear(); server=NimBLEServer{}; advertising=NimBLEAdvertising{}; }
 };

@@ -7,6 +7,7 @@ import { download, installer } from '../src/updates';
 import { releaseFixture } from '../testFixtures/releases';
 
 jest.mock('react-native-file-access', () => ({ Dirs: { CacheDir: '/cache' }, FileSystem: {} }));
+jest.mock('../src/version', () => ({ APP_VERSION: '0.3.0', APP_VERSION_CODE: 2 }));
 jest.mock('../src/releases', () => ({
   ...jest.requireActual('../src/releases'), latestRelease: jest.fn(),
 }));

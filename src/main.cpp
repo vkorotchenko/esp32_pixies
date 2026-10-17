@@ -58,7 +58,7 @@ void setup() {
   pinMode(PIXIES_RECOVERY_PIN,INPUT_PULLUP);
 #endif
   network.begin(); api.begin();
-  if(bluetooth.begin(network.apSsid.c_str())) Serial.println("Pixies BLE ready.");
+  if(bluetooth.begin(PIXIES_BLE_NAME)) Serial.println("Pixies BLE ready.");
   else Serial.println("Pixies BLE unavailable; use the local website or USB recovery.");
 }
 void loop() {

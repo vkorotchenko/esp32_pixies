@@ -57,7 +57,7 @@ export class Bluetooth {
         } else if (device) {
           found({
             id: device.id,
-            name: device.localName || device.name || 'Pixies',
+            name: 'pixies',
             rssi: device.rssi,
           });
         }

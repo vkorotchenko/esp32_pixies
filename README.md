@@ -187,8 +187,10 @@ Themes and effects are independent. Effects: steady, twinkle, candle, breathe,
 chase; see [the exact API](docs/API.md) for modulation controls.
 
 Preview changes only RAM. **Save** persists the entire validated configuration,
-including on/off. Count changes do not resize a running transport: Save, then
-request an explicit restart (paired BLE or authenticated HTTP). Status separately reports active,
+including on/off, without rebooting the ESP. Themes, effects, brightness and
+other lighting controls do not need a restart. **Only a changed LED count needs
+Save followed by a manual restart** (paired BLE or authenticated HTTP).
+Status separately reports active,
 requested and saved counts, plus live/saved restart requirements and revisions.
 Reboot always restores saved settings; unsaved previews disappear.
 Valid saved settings take precedence after firmware updates too. The new built-in
@@ -263,7 +265,6 @@ are lost when the ESP restarts.
 browser upgrade to 0.3.0+ before BLE OTA works. Switching an existing
 development-signed Android app to the dedicated production key needs a one-time
 uninstall/reinstall. This does not intentionally erase the ESP's saved settings.
-The current physical controller has not received this bootstrap update.
 
 ### Prepare a reviewed release
 
@@ -282,9 +283,10 @@ signing environment, validates the complete artifacts, stages and verifies all
 assets, then publishes them together. A failed job does not publish a partial
 release. After publication, the phone can discover the new version.
 
-**Initial release:** merging this feature's `version.json` onto `main` triggers
-0.3.0/code 2 directly. Do that deliberately; no existing public release is needed
-for this first version. The bump workflow handles subsequent versions. Retry a
+**Initial release:** merging this feature's `version.json` onto `main` publishes
+the version and Android code currently recorded in `version.json`. Do that
+deliberately; no existing public release is needed for this first version.
+The bump workflow handles subsequent versions. Retry a
 failed publication through its manual workflow on the same main commit; published
 versions and tags cannot be overwritten with other source.
 

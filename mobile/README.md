@@ -11,7 +11,9 @@ cloud service, or mandatory website password.
 2. Install this app, enable Bluetooth, tap **Scan controllers**, and select Pixies.
    Allow Bluetooth access and accept normal OS pairing if prompted.
 3. Choose a theme/effect, adjust sliders/count/palettes, then **Preview** or
-   **Save**. Only Save persists through restart. Count changes also need Restart.
+   **Save**. Save remembers your settings without restarting the ESP.
+   Only a changed LED count needs Save followed by a manual Restart; themes,
+   effects, brightness and the other lighting controls do not.
 4. Optionally open **Wi-Fi**, scan/select a 2.4 GHz router (or enter a hidden
    SSID), and connect. Credentials are tested and stored by the ESP, not the app.
    The app reports the outcome/address while your phone stays on its normal network.
@@ -22,6 +24,14 @@ The first clean device uses light-blue twinkling. Existing saved settings always
 win after reboot or firmware update. Wi-Fi setup/loss never resets your lights.
 Remote Internet light control is not implemented. Release downloads use your
 phone's Internet connection; firmware transfer and normal controls use BLE.
+
+Controllers appear as **pixies**. The app still selects and reconnects using the
+underlying device ID, not the shared friendly name. The ESP's Wi-Fi hotspot and
+local hostname retain their unique suffixes.
+
+Save feedback stays in the existing status area instead of inserting a loading
+row above the controls. A count-specific restart message appears only when the
+saved LED count actually differs from the active count.
 
 ## Phone-managed updates
 

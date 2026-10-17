@@ -162,7 +162,7 @@ struct BleFixture:Fixture {
   NimBLEServer& server=NimBLEDevice::server;
   uint32_t time=100;
   BleFixture() {
-    TEST_ASSERT_TRUE(bluetooth.begin("Pixies-test"));
+    TEST_ASSERT_TRUE(bluetooth.begin(PIXIES_BLE_NAME));
     server.callbacks->onConnect(&server,peer);
   }
   void authenticate(bool encrypted,bool bonded) {
@@ -222,6 +222,33 @@ struct BleFixture:Fixture {
     }
   }
 };
+void bluetooth_name_is_pixies_without_changing_network_identity() {
+  BleFixture f;
+  TEST_ASSERT_EQUAL_STRING("pixies",NimBLEDevice::name.c_str());
+  TEST_ASSERT_EQUAL_STRING("pixies",NimBLEDevice::advertising.scanName.c_str());
+  TEST_ASSERT_EQUAL(0,strncmp(f.network.apSsid.c_str(),"Pixies-",7));
+  TEST_ASSERT_EQUAL(0,strncmp(f.network.hostname.c_str(),"pixies-",7));
+}
+void ordinary_save_never_restarts_and_only_count_changes_wait_for_restart() {
+  Fixture f; const auto boot=f.control.bootId;
+  auto desired=f.settings.live; desired.brightness=31; desired.effect=pixies::Effect::Steady;
+  TEST_ASSERT_EQUAL(200,f.preview(desired,1));
+  TEST_ASSERT_EQUAL(200,f.call("config.save","{\"baseRevision\":2}"));
+  TEST_ASSERT_FALSE(f.reply["restartRequired"].as<bool>());
+  TEST_ASSERT_FALSE(f.reply["savedRestartRequired"].as<bool>());
+  TEST_ASSERT_FALSE(f.control.restarting);
+  TEST_ASSERT_TRUE(f.control.tick(fake_wifi::now+2000));
+  TEST_ASSERT_EQUAL(0,fake_wifi::restarts);
+  TEST_ASSERT_EQUAL_STRING(boot.c_str(),f.control.bootId.c_str());
+  TEST_ASSERT_TRUE(pixies::equal(desired,f.settings.live));
+  desired.ledCount=333;
+  TEST_ASSERT_EQUAL(200,f.preview(desired,2));
+  TEST_ASSERT_EQUAL(200,f.call("config.save","{\"baseRevision\":3}"));
+  TEST_ASSERT_TRUE(f.reply["savedRestartRequired"].as<bool>());
+  TEST_ASSERT_EQUAL(200,f.settings.activeCount);
+  TEST_ASSERT_FALSE(f.control.restarting);
+  TEST_ASSERT_EQUAL(0,fake_wifi::restarts);
+}
 void ble_ota_complete_image_drains_reply_before_restart_and_preserves_settings() {
   BleFixture f; f.authenticate(true,true);
   auto saved=f.settings.live; saved.brightness=17;
@@ -373,5 +400,7 @@ int main() {
   RUN_TEST(ble_ota_validates_offsets_and_rejects_truncation);
   RUN_TEST(ble_ota_rejects_wrong_target_versions_and_http_conflicts);
   RUN_TEST(ble_ota_complete_image_drains_reply_before_restart_and_preserves_settings);
+  RUN_TEST(bluetooth_name_is_pixies_without_changing_network_identity);
+  RUN_TEST(ordinary_save_never_restarts_and_only_count_changes_wait_for_restart);
   return UNITY_END();
 }

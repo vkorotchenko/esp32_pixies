@@ -9,6 +9,7 @@ import {
   Switch,
   Text,
   TextInput,
+  useWindowDimensions,
   View,
 } from 'react-native';
 import Slider from '@react-native-community/slider';
@@ -102,6 +103,7 @@ function Input(props: React.ComponentProps<typeof TextInput>) {
   );
 }
 function Controller() {
+  const { fontScale } = useWindowDimensions();
   const [bluetooth] = useState(() => new Bluetooth());
   const client = useRef<PixiesClient | null>(null);
   const working = useRef(false);
@@ -133,13 +135,13 @@ function Controller() {
     },
     [bluetooth],
   );
-  async function run(work: () => Promise<unknown>) {
+  async function run(work: () => Promise<unknown>, progressMessage = '') {
     if (working.current) {
       return;
     }
     working.current = true;
     setBusy(true);
-    setMessage('');
+    setMessage(progressMessage);
     try {
       await work();
     } catch (error) {
@@ -204,9 +206,7 @@ function Controller() {
     try {
       await load();
       setConnected(device.name);
-      setMessage(
-        'Connected over Bluetooth. Your phone can stay on its normal Wi-Fi.',
-      );
+      setMessage('Connected over Bluetooth.');
     } catch (error) {
       await disconnect();
       throw error;
@@ -295,9 +295,13 @@ function Controller() {
         }),
       );
       accept(saved);
-      setMessage('Saved on the ESP. These settings will return after reboot.');
+      setMessage(
+        saved.savedRestartRequired
+          ? 'Saved. Restart for the LED count only.'
+          : 'Saved. No restart needed.',
+      );
     } else {
-      setMessage('Preview applied in RAM. Tap Save to keep it after reboot.');
+      setMessage('Preview active. Not saved yet.');
     }
   }
   async function scanWifi() {
@@ -415,12 +419,22 @@ function Controller() {
         <Text style={styles.subtitle}>
           {connected || 'Bluetooth lights, without hotspot setup'}
         </Text>
-        {!!message && (
-          <Text accessibilityRole="alert" style={styles.notice}>
-            {message}
-          </Text>
-        )}
-        {busy && <Text style={styles.subtitle}>Working...</Text>}
+        <Text
+          testID="operation-status"
+          accessibilityRole={message ? 'alert' : undefined}
+          accessibilityLiveRegion="polite"
+          style={[
+            styles.notice,
+            { minHeight: 2 * styles.notice.padding + 3 * styles.notice.lineHeight * fontScale },
+          ]}
+        >
+          {message ||
+            (busy
+              ? 'Working...'
+              : connected
+              ? 'Ready.'
+              : 'Select a controller to get started.')}
+        </Text>
         <UpdatePanel health={deviceStatus} disabled={busy}
           client={api} reconnect={reconnectAfterUpdate}
           onBusy={value => {
@@ -569,8 +583,9 @@ function Controller() {
                     maxLength={4}
                   />
                   <Text style={styles.text}>
-                    Active: {state.activeLedCount}. Count changes take effect
-                    after Save and Restart.
+                    Active: {state.activeLedCount}. Only LED-count changes need
+                    Save, then Restart. Other lighting settings do not need a
+                    restart.
                   </Text>
                   <View style={styles.row}>
                     <Button
@@ -581,7 +596,7 @@ function Controller() {
                     <Button
                       label="Save"
                       disabled={blocked}
-                      onPress={() => run(() => preview(true))}
+                      onPress={() => run(() => preview(true), 'Saving...')}
                     />
                     <Button
                       label="Reload"
