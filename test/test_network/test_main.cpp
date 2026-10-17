@@ -1,4 +1,5 @@
 #include <unity.h>
+#include <cstdio>
 #include "../../src/SettingsStore.cpp"
 #ifndef PIXIES_NETWORK_SOURCE
 #define PIXIES_NETWORK_SOURCE "../../src/NetworkManager.cpp"
@@ -142,6 +143,8 @@ void reset_and_saved_network_fallback_remain_cooperative() {
   TEST_ASSERT_FALSE(network.wifiSaved); TEST_ASSERT_EQUAL_STRING("setup_ap",network.state);
 }
 int main() {
+  // Preserve assertion diagnostics if Linux LeakSanitizer exits without flushing.
+  std::setvbuf(stdout,nullptr,_IONBF,0);
   UNITY_BEGIN();
   RUN_TEST(first_persistence_failure_disconnects_and_keeps_protected_ap);
   RUN_TEST(persistence_failure_restores_old_credentials_and_fresh_stability_timer);

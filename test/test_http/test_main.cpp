@@ -1,5 +1,6 @@
 #include <unity.h>
 #include <SettingsJson.h>
+#include <cstdio>
 #include <fstream>
 #include <iterator>
 #ifndef PIXIES_RECEIVER_SOURCE
@@ -296,6 +297,8 @@ void failed_or_bad_receive_never_mutates_config() {
   TEST_ASSERT_EQUAL(2,endpoint.settings.revision);
 }
 int main() {
+  // Preserve assertion diagnostics if Linux LeakSanitizer exits without flushing.
+  std::setvbuf(stdout,nullptr,_IONBF,0);
 #ifdef PIXIES_BOUNDARY_ONLY
   UNITY_BEGIN(); RUN_TEST(json_chunk_boundaries_1023_1024_1025); return UNITY_END();
 #else
