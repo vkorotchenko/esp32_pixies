@@ -71,6 +71,10 @@ state rather than automatically replaying a Save, restart, or credentials.
 | `restart` | `{"confirm":"restart"}` | 202, delayed restart |
 | `factory-reset` | `{"confirm":"factory-reset"}` | Clear settings, credentials, admin and bonds; restart |
 | `admin.claim` | `{"password":"..."}` | Optional first website-admin setup, 12..64 bytes |
+| `ota.begin` | `{"size":n,"sha256":"<64 lowercase hex>","version":"x.y.z","target":"esp32s3_n16r8"}` | 200 `{transferId,offset:0,chunkBytes:1024}` |
+| `ota.chunk` | `{"transferId":"<16 lowercase hex>","offset":n,"data":"<base64>"}` | 200 `{transferId,offset:<next offset>}` |
+| `ota.finish` | `{"transferId":"..."}` | 202 `{state:"restarting",version,receivedBytes}` after verification/boot selection |
+| `ota.abort` | `{"transferId":"..."}` | 200 `{state:"aborted"}` |
 
 `admin.claim` is not an app login and is unnecessary for BLE control. Existing web
 administration still requires its normal password/session; BLE initial setup is
@@ -83,6 +87,34 @@ do not replace previously saved credentials. Passwords are never echoed.
 Both transports share configuration, revisions, Save, network operations and
 OTA/restart busy checks. A browser edit can cause a BLE revision conflict:
 reload deliberately rather than silently overwriting another controller.
+
+## BLE firmware OTA
+
+Status advertises `update.bleOtaProtocol:1` from firmware 0.3.0. Earlier images
+need one USB/browser bootstrap. Begin accepts only the compiled target and a
+strictly newer stable version; the image must fit the inactive 7MiB application
+slot. Every command requires the same encrypted, bonded connection generation
+and transfer ID. Decoded chunks contain 1..1024 bytes and must start at the exact
+next offset. The ordinary framing and command-response deadlines still apply.
+
+Flash work runs in the application loop, not NimBLE callbacks. The shared
+updater owns each transfer exclusively: HTTP cannot write, finalize, select or
+abort a BLE transfer, or vice versa. Settings, network mutations and restart
+remain busy while updating. Begin rejects an active Wi-Fi candidate or scan.
+
+Disconnect, lost authorization, invalid chunk/offset, failed flash/checksum,
+truncation, explicit abort, or 60 seconds without transfer progress cancels an
+incomplete owned transfer and restores rendering. None selects an incomplete
+image. Finish verifies the streaming SHA-256 and ESP-IDF image checks before
+selecting the boot slot. The final framed reply drains before scheduling the
+one-second restart; if that connection disappears after selection, the device
+still restarts.
+
+Do not replay ambiguous mutations. After finalization, require reconnection to
+the same controller, a new boot ID, matching target, and the exact requested
+version. A disconnect or an `ota.finish` GATT acknowledgement alone is not
+success. Saved NVS survives normal updates; unsaved previews do not.
+Hashes plus encrypted BLE are not signed ESP firmware, secure boot, or rollback.
 
 ## Defaults, recovery, and acceptance
 

@@ -15,6 +15,8 @@ import Slider from '@react-native-community/slider';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { Bluetooth, FoundDevice } from './src/ble';
 import { PixiesClient } from './src/client';
+import { UpdatePanel } from './src/UpdatePanel';
+import { checkCanceled } from './src/updates';
 import {
   Config,
   EFFECTS,
@@ -103,6 +105,8 @@ function Controller() {
   const [bluetooth] = useState(() => new Bluetooth());
   const client = useRef<PixiesClient | null>(null);
   const working = useRef(false);
+  const selectedDevice = useRef<FoundDevice | null>(null);
+  const updating = useRef(false);
   const [busy, setBusy] = useState(false);
   const [scanning, setScanning] = useState(false);
   const [devices, setDevices] = useState<FoundDevice[]>([]);
@@ -129,7 +133,7 @@ function Controller() {
     },
     [bluetooth],
   );
-  async function run(work: () => Promise<void>) {
+  async function run(work: () => Promise<unknown>) {
     if (working.current) {
       return;
     }
@@ -168,6 +172,7 @@ function Controller() {
     }
     accept(current);
     setDeviceStatus(health);
+    return health;
   }
   async function disconnect() {
     client.current?.close();
@@ -181,6 +186,7 @@ function Controller() {
     await bluetooth.close();
   }
   async function connect(device: FoundDevice) {
+    selectedDevice.current = device;
     const link = await bluetooth.connect(device.id, error => {
       client.current?.close();
       client.current = null;
@@ -190,7 +196,9 @@ function Controller() {
       setDeviceStatus(null);
       setPassword('');
       setWebsitePassword('');
-      setMessage(`${error.message} Reconnect to read what the ESP retained.`);
+      if (!updating.current) {
+        setMessage(`${error.message} Reconnect to read what the ESP retained.`);
+      }
     });
     client.current = new PixiesClient(link);
     try {
@@ -203,6 +211,32 @@ function Controller() {
       await disconnect();
       throw error;
     }
+  }
+  async function reconnectAfterUpdate(oldBoot: string, version: string, signal: AbortSignal): Promise<Status> {
+    const device = selectedDevice.current;
+    if (!device) {
+      throw new Error('Original controller identity is unavailable; reconnect manually to verify.');
+    }
+    await disconnect();
+    const deadline = Date.now() + 90000;
+    let lastError = 'Controller did not reconnect.';
+    while (Date.now() < deadline) {
+      checkCanceled(signal);
+      await sleep(1500);
+      try {
+        await connect(device);
+        const health = await load();
+        checkCanceled(signal);
+        if (health.bootId !== oldBoot && health.firmware.version === version) {
+          return health;
+        }
+        lastError = `Controller still reports firmware ${health.firmware.version}; update is not verified.`;
+      } catch (error) {
+        lastError = error instanceof Error ? error.message : 'Bluetooth reconnection failed.';
+      }
+      await disconnect();
+    }
+    throw new Error(`Update is not verified. ${lastError}`);
   }
   async function scan() {
     setDevices([]);
@@ -387,6 +421,13 @@ function Controller() {
           </Text>
         )}
         {busy && <Text style={styles.subtitle}>Working...</Text>}
+        <UpdatePanel health={deviceStatus} disabled={busy}
+          client={api} reconnect={reconnectAfterUpdate}
+          onBusy={value => {
+            updating.current = value;
+            working.current = value;
+            setBusy(value);
+          }} />
         {!connected ? (
           <Card title="Connect">
             <Text style={styles.text}>

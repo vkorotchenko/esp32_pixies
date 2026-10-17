@@ -244,6 +244,7 @@ void WebApi::begin() {
     invoke("factory-reset",doc.as<JsonVariantConst>());
   });
   server_.on("/api/update",HTTP_POST,[this](){
+    if(ota_.owns(OtaOwner::Ble)) { error(409,"busy","Bluetooth firmware update in progress"); return; }
     if(!adminGuard()||!ota_.select()) {
       if(ota_.busy) ota_.abort("boot_select_failed");
       // select errors are separate from failures already answered by the guard.

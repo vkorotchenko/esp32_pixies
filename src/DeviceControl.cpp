@@ -42,7 +42,7 @@ bool DeviceControl::resetAll() {
 }
 bool DeviceControl::tick(uint32_t now) {
   admin.expire(now); network.holdAp=ota.busy;
-  if(restarting&&pixies::elapsed(now,restartAt,1000)) { ESP.restart(); return false; }
+  if(restarting&&static_cast<int32_t>(now-restartAt)>=1000) { ESP.restart(); return false; }
   return true;
 }
 void DeviceControl::config(JsonDocument& doc) {
@@ -70,12 +70,7 @@ void DeviceControl::status(JsonDocument& doc) {
   s["restartRequired"]=settings.restartRequired();
   s["savedRestartRequired"]=settings.persisted.ledCount!=settings.activeCount;
   s["recovery"]=store.settingsRecovery;
-  auto led=doc.createNestedObject("led");
-  led["ready"]=leds.ready; led["gpio"]=PIXIES_LED_PIN; led["order"]=PIXIES_COLOR_GRB?"GRB":"RGB";
-  led["maxCount"]=pixies::kMaxLeds; led["budgetMa"]=PIXIES_CURRENT_MA;
-  led["estimatedMa"]=leds.power.estimatedMa; led["requestedMa"]=leds.power.requestedMa;
-  led["limited"]=leds.power.limited; led["scalePermille"]=leds.power.scalePermille;
-  led["frames"]=leds.frames; led["pausedForUpdate"]=ota.busy;
+  ledStatus(doc.createNestedObject("led"));
   auto net=doc.createNestedObject("network");
   net["state"]=network.state; net["hostname"]=network.hostname+".local";
   net["connected"]=WiFi.status()==WL_CONNECTED;
@@ -90,9 +85,22 @@ void DeviceControl::status(JsonDocument& doc) {
   // HTTP adds the protected-AP peer decision; BLE never needs the web claim flow.
   a["claimAllowed"]=false;
   auto update=doc.createNestedObject("update");
+  update["bleOtaProtocol"]=1;
   update["state"]=ota.state; update["busy"]=ota.busy; update["receivedBytes"]=ota.received();
   update["expectedBytes"]=ota.expected(); update["slotBytes"]=ota.slotSize(); update["error"]=ota.error;
   doc["restarting"]=restarting;
+}
+void DeviceControl::ledStatus(JsonObject led) {
+  led["ready"]=leds.ready; led["gpio"]=PIXIES_LED_PIN;
+  led["protocol"]=PIXIES_LED_WS2811?"WS2811":"WS2812x";
+  led["order"]=PIXIES_COLOR_GRB?"GRB":"RGB";
+  led["maxCount"]=pixies::kMaxLeds; led["budgetMa"]=PIXIES_CURRENT_MA;
+  led["estimatedMa"]=leds.power.estimatedMa; led["requestedMa"]=leds.power.requestedMa;
+  led["limited"]=leds.power.limited; led["scalePermille"]=leds.power.scalePermille;
+  led["frames"]=leds.frames; led["pausedForUpdate"]=ota.busy;
+  led["activeLedCount"]=settings.activeCount; led["requestedLedCount"]=settings.live.ledCount;
+  led["on"]=settings.live.on; led["brightness"]=settings.live.brightness;
+  led["effect"]=pixies::effectName(settings.live.effect); led["paletteId"]=settings.live.paletteId;
 }
 int DeviceControl::execute(const char* op,JsonVariantConst args,JsonDocument& out) {
   out.clear();

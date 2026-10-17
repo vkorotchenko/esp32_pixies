@@ -100,7 +100,7 @@
       <div class="settings-grid">
         <section class="card" aria-labelledby="string-title">
           <h3 id="string-title">One string. A thousand possibilities.</h3>
-          <p class="help">One 5 V WS2812 string, 1–1,000 pixels. Length changes are preview settings until Saved. An explicit admin restart then changes the active driver.</p>
+          <p class="help">One 5 V serial pixel string, 1–1,000 pixels. Protocol and channel order follow the firmware build profile. Length changes are preview settings until Saved. An explicit admin restart then changes the active driver.</p>
           <form id="count-form" novalidate><label for="led-count">Requested pixel count</label><div class="input-button"><input id="led-count" type="number" min="1" max="1000" step="1" inputmode="numeric" data-light-control disabled aria-describedby="led-count-error"><button id="apply-count" class="secondary" type="submit" data-light-control disabled>Set preview count</button></div><span id="led-count-error" class="field-error"></span></form>
           <dl class="count-grid"><div><dt>Active now</dt><dd id="active-count">—</dd></div><div><dt>Requested</dt><dd id="requested-count">—</dd></div><div><dt>Saved for boot</dt><dd id="saved-count">—</dd></div></dl>
           <p id="restart-state" class="notice subtle">Loading pixel count…</p>

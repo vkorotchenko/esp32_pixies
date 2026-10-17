@@ -29,6 +29,10 @@ class BleControl : private NimBLEServerCallbacks, private NimBLECharacteristicCa
   std::array<uint8_t,pixies::ble::kMaxMessage> response_{};
   size_t responseSize_=0,responseOffset_=0;
   uint16_t responseId_=0;
+  uint32_t otaGeneration_=0,otaTouched_=0;
+  uint16_t otaHandle_=BLE_HS_CONN_HANDLE_NONE;
+  char otaId_[17]{},otaVersion_[24]{};
+  bool otaRestartPending_=false;
   void onConnect(NimBLEServer*,NimBLEConnInfo&) override;
   void onDisconnect(NimBLEServer*,NimBLEConnInfo&,int) override;
   void onAuthenticationComplete(NimBLEConnInfo&) override;
@@ -37,4 +41,5 @@ class BleControl : private NimBLEServerCallbacks, private NimBLECharacteristicCa
   void reply(uint16_t,int,JsonDocument&,uint32_t);
   void error(uint16_t,const char*,const char*,uint32_t);
   void execute(uint32_t);
+  int otaCommand(const char*,JsonVariantConst,JsonDocument&,uint32_t);
 };

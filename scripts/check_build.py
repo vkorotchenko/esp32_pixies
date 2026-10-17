@@ -55,7 +55,7 @@ def check(image=None):
 
 if __name__ == "__main__":
     check(sys.argv[1] if len(sys.argv) > 1 else None)
-else:
+elif "__file__" not in globals():
     Import("env")
     def after_build(source, target, env):
         check(env.subst("$BUILD_DIR/${PROGNAME}.bin"))

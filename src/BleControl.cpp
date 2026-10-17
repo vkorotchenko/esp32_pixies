@@ -1,8 +1,15 @@
 #include "BleControl.h"
 #include <algorithm>
 #include <cstring>
+#include <SemVer.h>
+#include <esp_system.h>
+#include <mbedtls/base64.h>
 
 bool BleControl::begin(const char* name) {
+  control_.ota.bleGuard=[this](){
+    return secured_&&connection_!=BLE_HS_CONN_HANDLE_NONE&&
+      connection_==otaHandle_&&generation_==otaGeneration_;
+  };
   control_.clearBonds=[](){
     return NimBLEDevice::isInitialized()&&NimBLEDevice::deleteAllBonds()&&NimBLEDevice::getNumBonds()==0;
   };
@@ -121,19 +128,90 @@ void BleControl::execute(uint32_t now) {
     const JsonString op=request["op"].as<JsonString>();
     if(op.size()>32||strlen(op.c_str())!=op.size()) error(id,"invalid_json","Invalid command name",now);
     else {
-      const int status=control_.execute(op.c_str(),request["args"],result);
+      const int status=!strncmp(op.c_str(),"ota.",4)
+        ?otaCommand(op.c_str(),request["args"],result,now)
+        :control_.execute(op.c_str(),request["args"],result);
       reply(id,status,result,now);
     }
   }
   receiver_.reset();
 }
+int BleControl::otaCommand(const char* op,JsonVariantConst args,JsonDocument& out,uint32_t now) {
+  auto& ota=control_.ota;
+  const auto fail=[&](int status,const char* code,const char* message) {
+    out.clear(); auto e=out.createNestedObject("error"); e["code"]=code; e["message"]=message;
+    return status;
+  };
+  const auto fields=[&](std::initializer_list<const char*> keys) {
+    return args.is<JsonObjectConst>()&&args.size()==keys.size()&&
+      pixies::keysOnly(args.as<JsonObjectConst>(),keys.begin(),keys.size());
+  };
+  if(!strcmp(op,"ota.begin")) {
+    if(!fields({"size","sha256","version","target"})||!args["size"].is<uint32_t>()||
+       args["size"].is<bool>()||!args["sha256"].is<const char*>()||
+       !args["version"].is<const char*>()||!args["target"].is<const char*>())
+      return fail(422,"validation","Expected size, sha256, version and target");
+    int comparison=0;
+    if(args["target"]!=PIXIES_TARGET||
+       !pixies::compareVersion(args["version"],PIXIES_VERSION,comparison)||comparison<=0||
+       args["version"].as<JsonString>().size()!=strlen(args["version"])||
+       args["sha256"].as<JsonString>().size()!=64)
+      return fail(422,"incompatible_update","Target must match and version must be newer");
+    if(ota.busy||control_.restarting||control_.network.operationBusy()||
+       !strcmp(control_.network.scanState,"running"))
+      return fail(409,"busy","Finish other device operations before updating");
+    otaGeneration_=generation_; otaHandle_=connection_;
+    if(!ota.begin(args["size"].as<uint32_t>(),OtaOwner::Ble,args["sha256"]))
+      return fail(422,"update_rejected",ota.error);
+    snprintf(otaId_,sizeof otaId_,"%08lx%08lx",static_cast<unsigned long>(esp_random()),static_cast<unsigned long>(esp_random()));
+    strcpy(otaVersion_,args["version"]); otaTouched_=now;
+    out["transferId"]=otaId_; out["offset"]=0; out["chunkBytes"]=1024; return 200;
+  }
+  if(strcmp(op,"ota.chunk")&&strcmp(op,"ota.finish")&&strcmp(op,"ota.abort"))
+    return fail(404,"not_found","Unknown update command");
+  if(!ota.owns(OtaOwner::Ble)||otaGeneration_!=generation_||otaHandle_!=connection_||
+     !args["transferId"].is<const char*>()||args["transferId"].as<JsonString>().size()!=16||
+     strcmp(args["transferId"],otaId_))
+    return fail(409,"transfer_lost","Update session is unavailable; start again explicitly");
+  if(otaRestartPending_) return fail(409,"busy","Verified update is restarting");
+  if(!strcmp(op,"ota.chunk")) {
+    if(!fields({"transferId","offset","data"})||!args["offset"].is<uint32_t>()||
+       args["offset"].is<bool>()||!args["data"].is<const char*>())
+      return fail(422,"validation","Expected transferId, offset and base64 data");
+    if(args["offset"].as<uint32_t>()!=ota.received()) {
+      ota.abort("offset_mismatch",OtaOwner::Ble);
+      return fail(409,"offset_mismatch","Chunk was not the exact next offset; transfer aborted");
+    }
+    const auto text=args["data"].as<JsonString>(); uint8_t bytes[1024]; size_t size=0;
+    if(!text.size()||text.size()>1368||strlen(text.c_str())!=text.size()||
+       mbedtls_base64_decode(bytes,sizeof bytes,&size,
+         reinterpret_cast<const unsigned char*>(text.c_str()),text.size())!=0||!size) {
+      ota.abort("invalid_chunk",OtaOwner::Ble);
+      return fail(422,"invalid_chunk","Expected at most 1024 decoded bytes");
+    }
+    if(!ota.chunk(bytes,size,OtaOwner::Ble)) return fail(422,"update_failed",ota.error);
+    otaTouched_=now; out["transferId"]=otaId_; out["offset"]=ota.received(); return 200;
+  }
+  if(!fields({"transferId"})) return fail(422,"validation","Expected only transferId");
+  if(!strcmp(op,"ota.abort")) {
+    ota.abort("canceled",OtaOwner::Ble); out["state"]="aborted"; return 200;
+  }
+  if(!ota.end(OtaOwner::Ble)||!ota.select(OtaOwner::Ble)) return fail(422,"update_failed",ota.error);
+  otaRestartPending_=true;
+  out["state"]="restarting"; out["version"]=otaVersion_; out["receivedBytes"]=ota.received();
+  return 202;
+}
 void BleControl::tick(uint32_t now) {
   if(!server_||!queue_) return;
   const uint32_t generation=generation_;
   if(generation!=seenGeneration_) {
+    if(otaRestartPending_) { otaRestartPending_=false; control_.restartLater(); }
+    else if(control_.ota.owns(OtaOwner::Ble)) control_.ota.abort("disconnected",OtaOwner::Ble);
     seenGeneration_=generation; receiver_.reset(); response_.fill(0);
     responseSize_=responseOffset_=0; overflow_=false;
   }
+  if(control_.ota.owns(OtaOwner::Ble)&&!otaRestartPending_&&
+     pixies::elapsed(now,otaTouched_,60000)) control_.ota.abort("transfer_timeout",OtaOwner::Ble);
   const auto handle=connection_.load();
   if(overflow_.exchange(false)) {
     Serial.println("BLE receive queue full; disconnecting.");
@@ -162,7 +240,10 @@ void BleControl::tick(uint32_t now) {
       const size_t n=pixies::ble::packet(response_.data(),responseSize_,responseId_,true,responseOffset_,bytes,cap);
       if(n&&tx_->notify(bytes,n,handle)) {
         responseOffset_+=n-pixies::ble::kHeader; sentAt_=now;
-        if(responseOffset_==responseSize_) { response_.fill(0); responseSize_=responseOffset_=0; }
+        if(responseOffset_==responseSize_) {
+          response_.fill(0); responseSize_=responseOffset_=0;
+          if(otaRestartPending_) { otaRestartPending_=false; control_.restartLater(); }
+        }
       }
     }
     return;

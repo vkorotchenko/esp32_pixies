@@ -233,22 +233,23 @@ Direct AP UI/control does not require choosing a router.
 ```json
 {
   "schemaVersion":1,"bootId":"0123456789abcdef","uptimeMs":12345,"freeHeapBytes":200000,
-  "firmware":{"version":"0.1.0","target":"esp32s3_n16r8",
+  "firmware":{"version":"0.3.0","target":"esp32s3_n16r8",
     "flashBytes":16777216,"psramBytes":8388608,
     "expectedFlashBytes":16777216,"expectedPsramBytes":8388608,"memoryMatches":true},
   "settings":{"revision":2,"savedRevision":1,"dirty":true,
     "activeLedCount":200,"requestedLedCount":250,"savedLedCount":200,
     "restartRequired":true,"savedRestartRequired":false,"recovery":"missing"},
-  "led":{"ready":true,"gpio":4,"order":"GRB","maxCount":1000,"budgetMa":9000,
+  "led":{"ready":true,"gpio":4,"protocol":"WS2811","order":"RGB","maxCount":1000,"budgetMa":9000,
     "estimatedMa":1900,"requestedMa":1900,"limited":false,"scalePermille":1000,
-    "frames":100,"pausedForUpdate":false},
+    "frames":100,"pausedForUpdate":false,"activeLedCount":200,"requestedLedCount":250,
+    "on":true,"brightness":25,"effect":"twinkle","paletteId":"builtin:light-blue"},
   "network":{"state":"setup_ap","hostname":"pixies-0123456789ab.local",
     "connected":false,"ip":"","ssid":"","apOpen":true,
     "apSsid":"Pixies-0123456789ab","apIp":"192.168.4.1",
     "wifiSaved":false,"candidateState":"idle","scanState":"idle","error":""},
   "admin":{"configured":false,"credentialRecovery":"none","claimAllowed":true},
   "update":{"state":"idle","busy":false,"receivedBytes":0,"expectedBytes":0,
-    "slotBytes":7340032,"error":""},
+    "slotBytes":7340032,"error":"","bleOtaProtocol":1},
   "restarting":false
 }
 ```
@@ -265,6 +266,12 @@ were used, not that an invalid record was silently overwritten.
 measurement; idle current remains even with black pixels. During OTA these
 figures may be stale; use `pausedForUpdate`. `scalePermille` is the current
 limiter multiplier **in addition to** requested brightness.
+
+`led.protocol` and `led.order` report the compiled output profile, not an
+autodetected string. `led.activeLedCount` and `led.requestedLedCount` mirror the
+settings counts; the other lighting fields reflect the current RAM preview.
+The local USB `ledstatus` command returns only this `led` object.
+`frames` counts software submissions, not confirmed physical pixel updates.
 
 ## Firmware upload — exact wire format
 

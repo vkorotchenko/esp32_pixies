@@ -1,9 +1,13 @@
 #pragma once
+#include "version.h"
 #ifndef PIXIES_LED_PIN
 #define PIXIES_LED_PIN 4
 #endif
+#ifndef PIXIES_LED_WS2811
+#define PIXIES_LED_WS2811 1
+#endif
 #ifndef PIXIES_COLOR_GRB
-#define PIXIES_COLOR_GRB 1
+#define PIXIES_COLOR_GRB 0
 #endif
 #ifndef PIXIES_CURRENT_MA
 #define PIXIES_CURRENT_MA 9000
@@ -11,10 +15,11 @@
 #ifndef PIXIES_RECOVERY_PIN
 #define PIXIES_RECOVERY_PIN -1
 #endif
-#define PIXIES_VERSION "0.2.1"
 #define PIXIES_TARGET "esp32s3_n16r8"
 // Carrier unconfirmed: a deliberately opted-in, active-low recovery input.
 // Never assign PSRAM/USB/strapping pins without verifying the actual carrier.
+static_assert(PIXIES_LED_WS2811 == 0 || PIXIES_LED_WS2811 == 1, "Select WS2811 (1) or WS2812x (0)");
+static_assert(PIXIES_COLOR_GRB == 0 || PIXIES_COLOR_GRB == 1, "Select RGB (0) or GRB (1)");
 static_assert(PIXIES_LED_PIN >= 0 && PIXIES_LED_PIN <= 48, "Invalid LED pin");
 static_assert(PIXIES_LED_PIN != 35 && PIXIES_LED_PIN != 36 && PIXIES_LED_PIN != 37,
               "N16R8 Octal PSRAM reserves GPIO35/36/37");

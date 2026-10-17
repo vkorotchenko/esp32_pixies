@@ -1,6 +1,7 @@
 import React from 'react';
 import TestRenderer, { act, ReactTestRenderer } from 'react-test-renderer';
 import App from '../App';
+jest.mock('react-native-file-access', () => ({ Dirs: { CacheDir: '/cache' }, FileSystem: {} }));
 
 const mockScan = jest.fn().mockResolvedValue(undefined);
 jest.mock('../src/ble', () => ({
@@ -29,6 +30,7 @@ test('starts at device discovery without a hotspot or app-login form', async () 
   expect(
     rendered.root.findByProps({ label: 'Scan controllers' }),
   ).toBeDefined();
+  expect(rendered.root.findByProps({ label: 'Check for updates' })).toBeDefined();
   expect(
     rendered.root.findAllByProps({ accessibilityLabel: 'Wi-Fi password' }),
   ).toHaveLength(0);

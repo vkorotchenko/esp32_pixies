@@ -18,6 +18,11 @@ void usbTick() {
     const char c=Serial.read();
     if(c=='\n'||c=='\r') {
       if(!strcmp(usbCommand,"setup")) network.printSetupLocally();
+      else if(!strcmp(usbCommand,"ledstatus")) {
+        StaticJsonDocument<1024> doc;
+        control.ledStatus(doc.to<JsonObject>());
+        Serial.print("Pixies LED status: "); serializeJson(doc,Serial); Serial.println();
+      }
       memset(usbCommand,0,sizeof usbCommand); usbCommandSize=0;
     } else if(usbCommandSize<sizeof(usbCommand)-1) usbCommand[usbCommandSize++]=c;
   }

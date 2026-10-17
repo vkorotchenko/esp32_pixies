@@ -3,6 +3,7 @@
 #include <cstddef>
 struct NeoGrbFeature {};
 struct NeoRgbFeature {};
+struct NeoEsp32Rmt0Ws2811Method {};
 struct NeoEsp32Rmt0Ws2812xMethod {};
 template<class Feature,class Method> class NeoPixelBus {
  public:

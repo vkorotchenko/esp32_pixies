@@ -59,7 +59,7 @@ export interface Status {
     wifiSaved: boolean;
   };
   admin: { configured: boolean };
-  update: { busy: boolean };
+  update: { busy: boolean; bleOtaProtocol?: number };
 }
 export interface WifiNetwork {
   ssid: string;

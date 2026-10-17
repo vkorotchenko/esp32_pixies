@@ -447,7 +447,7 @@ function startApp() {
       : !led.ready ? "LED driver is not ready. Check the device before expecting light output."
       : `${led.limited ? "Current limiting active · " : ""}${(led.estimatedMa / 1000).toFixed(2)} A estimated / ${(led.budgetMa / 1000).toFixed(1)} A budget · requested ${(led.requestedMa / 1000).toFixed(2)} A · limiter ${(led.scalePermille / 10).toFixed(1)}%`);
     $("power-status").classList.toggle("limited", led.limited);
-    dataList("hardware-details", [["Output", `5 V WS2812 · ${led.order} · GPIO${led.gpio}`], ["Firmware pixel limit", led.maxCount], ["Estimated LED budget", `${led.budgetMa.toLocaleString("en-US")} mA`]]);
+    dataList("hardware-details", [["Output", `5 V ${led.protocol ?? "Protocol unknown"} · ${led.order} · GPIO${led.gpio}`], ["Firmware pixel limit", led.maxCount], ["Estimated LED budget", `${led.budgetMa.toLocaleString("en-US")} mA`]]);
     dataList("device-details", [["Firmware target", fw.target], ["Uptime", formatUptime(status.uptimeMs)], ["Boot ID", status.bootId], ["Revisions (live / saved)", `${state.device?.revision ?? status.settings.revision} / ${state.device?.savedRevision ?? status.settings.savedRevision}`], ["Flash", `${fw.flashBytes.toLocaleString("en-US")} bytes`], ["PSRAM", `${fw.psramBytes.toLocaleString("en-US")} bytes`], ["Memory matches target", fw.memoryMatches ? "Yes" : "NO · verify hardware"], ["Free heap", `${status.freeHeapBytes.toLocaleString("en-US")} bytes`], ["Rendered frames", led.frames]]);
     const reasons = [];
     if (status.settings.recovery !== "none") reasons.push(`Settings recovery: ${status.settings.recovery}. Defaults may have been used; Save is explicit.`);

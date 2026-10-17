@@ -7,6 +7,10 @@ on:
       - "src/DeviceControl.*"
       - "lib/PixiesCore/**"
       - ".github/workflows/mobile.yml"
+      - "version.json"
+      - "include/version.h"
+      - "android-signing.sha256"
+      - "scripts/release.py"
   pull_request:
     paths:
       - "mobile/**"
@@ -14,6 +18,10 @@ on:
       - "src/DeviceControl.*"
       - "lib/PixiesCore/**"
       - ".github/workflows/mobile.yml"
+      - "version.json"
+      - "include/version.h"
+      - "android-signing.sha256"
+      - "scripts/release.py"
   workflow_dispatch:
 permissions:
   contents: read
@@ -55,7 +63,7 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
       - run: npm ci --no-audit --no-fund
       - name: Build bundled, development-signed arm64 APK
-        run: npm run apk -- -PreactNativeArchitectures=arm64-v8a
+        run: npm run apk -- -PpixiesDevelopmentSigning=true -PreactNativeArchitectures=arm64-v8a
       - name: Require the offline JavaScript bundle
         run: python3 -c 'import zipfile; z=zipfile.ZipFile("android/app/build/outputs/apk/release/app-release.apk"); assert z.getinfo("assets/index.android.bundle").file_size > 0'
       - uses: actions/upload-artifact@v4

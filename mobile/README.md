@@ -20,7 +20,29 @@ cloud service, or mandatory website password.
 
 The first clean device uses light-blue twinkling. Existing saved settings always
 win after reboot or firmware update. Wi-Fi setup/loss never resets your lights.
-Remote Internet control and native BLE firmware uploading are not implemented.
+Remote Internet light control is not implemented. Release downloads use your
+phone's Internet connection; firmware transfer and normal controls use BLE.
+
+## Phone-managed updates
+
+The **Updates** card shows the installed app and connected firmware versions.
+Check for a stable GitHub release. Android can download its signed APK even
+without a controller connection; allow **Install unknown apps** for Pixies and
+approve the Android installer. The app verifies size/hash, and Android preflight
+checks package, higher version code and the installed certificate. The installer
+opening is not confirmation that installation succeeded.
+
+Firmware updates require a connected controller with BLE OTA capability.
+The app verifies the image, sends ordered acknowledged chunks, and checks a new
+boot ID plus the exact release version after reconnecting. Do not switch away,
+remove power or move out of range. Cancellation/backgrounding aborts incomplete
+work; after finalization, reconnect to establish what actually booted.
+
+Firmware 0.2.2 and earlier needs one USB/browser upgrade to 0.3.0+ first.
+The old development-signed APK also needs a one-time uninstall/reinstall to
+switch to the dedicated production certificate. Future production APKs update
+in place with that same key. iPhone app distribution remains an Apple signing/
+distribution task; BLE firmware updating is shared by Android and iPhone.
 
 ## Development
 
@@ -56,14 +78,20 @@ credentials or production Android keystore belong in this repository.
 
 ```sh
 # Optional: point JAVA_HOME / ANDROID_HOME at your existing local toolchains.
-npm run apk -- -PreactNativeArchitectures=arm64-v8a
+npm run apk -- -PpixiesDevelopmentSigning=true -PreactNativeArchitectures=arm64-v8a
 ```
 
 Output: `android/app/build/outputs/apk/release/app-release.apk`. This arm64
 development APK embeds its JS and does not need Metro or Internet. It uses the
 standard public React Native **development** signing key, not a production/store
 key. Install only builds you trust and permit installation from the chosen source
-on your phone. Production distribution needs separate signing/release work.
+on your phone. For a genuinely production-signed build, run
+`make android-release` from the repository root. There is no automatic
+development-key fallback. See [release and key backup instructions](../README.md#releases-and-phone-updates).
+
+The original icon source is `assets/pixies-icon.svg`. Run root `npm ci` and
+`make icons` to regenerate Android legacy/round/adaptive/monochrome and iOS
+opaque app icons.
 
 The **Bluetooth mobile app** GitHub Actions workflow runs app checks and packages
 the arm64 APK as `pixies-android-arm64`. It also compiles an unsigned bundled iOS

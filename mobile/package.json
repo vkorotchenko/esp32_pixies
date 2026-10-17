@@ -1,6 +1,6 @@
 {
   "name": "com.pixies.controller",
-  "version": "0.0.1",
+  "version": "0.3.0",
   "private": true,
   "scripts": {
     "android": "react-native run-android",
@@ -12,6 +12,7 @@
     "apk": "cd android && ./gradlew --no-daemon assembleRelease"
   },
   "dependencies": {
+    "react-native-file-access": "4.0.4",
     "react": "19.2.3",
     "react-native": "0.84.1",
     "buffer": "6.0.3",

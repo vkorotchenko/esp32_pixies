@@ -1,6 +1,10 @@
 apply plugin: "com.android.application"
 apply plugin: "org.jetbrains.kotlin.android"
 apply plugin: "com.facebook.react"
+def productVersion = new groovy.json.JsonSlurper().parse(rootProject.file("../../version.json"))
+def developmentSigning = project.findProperty("pixiesDevelopmentSigning") == "true"
+def signingNames = ["ANDROID_KEYSTORE_PATH", "ANDROID_KEYSTORE_PASSWORD", "ANDROID_KEY_ALIAS", "ANDROID_KEY_PASSWORD"]
+def releaseSigningReady = signingNames.every { System.getenv(it) }
 
 /**
  * This is the configuration block to customize your React Native Android app.
@@ -82,8 +86,8 @@ android {
         applicationId "com.pixies.controller"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 1
-        versionName "1.0"
+        versionCode productVersion.androidVersionCode
+        versionName productVersion.version
     }
     signingConfigs {
         debug {
@@ -92,17 +96,34 @@ android {
             keyAlias 'androiddebugkey'
             keyPassword 'android'
         }
+        release {
+            if (releaseSigningReady) {
+                storeFile file(System.getenv("ANDROID_KEYSTORE_PATH"))
+                storePassword System.getenv("ANDROID_KEYSTORE_PASSWORD")
+                keyAlias System.getenv("ANDROID_KEY_ALIAS")
+                keyPassword System.getenv("ANDROID_KEY_PASSWORD")
+            }
+        }
     }
     buildTypes {
         debug {
             signingConfig signingConfigs.debug
         }
         release {
-            // Caution! In production, you need to generate your own keystore file.
-            // see https://reactnative.dev/docs/signed-apk-android.
-            signingConfig signingConfigs.debug
+            signingConfig developmentSigning ? signingConfigs.debug : signingConfigs.release
             minifyEnabled enableProguardInReleaseBuilds
             proguardFiles getDefaultProguardFile("proguard-android.txt"), "proguard-rules.pro"
+        }
+
+        tasks.register("validatePixiesReleaseSigning") {
+            doLast {
+                if (!developmentSigning && !releaseSigningReady) {
+                    throw new GradleException("Production release signing is missing. Run make signing-setup or configure ANDROID_KEYSTORE_* / ANDROID_KEY_* variables. Development builds require -PpixiesDevelopmentSigning=true explicitly.")
+                }
+            }
+        }
+        tasks.configureEach {
+            if (name == "preReleaseBuild") dependsOn("validatePixiesReleaseSigning")
         }
     }
 }

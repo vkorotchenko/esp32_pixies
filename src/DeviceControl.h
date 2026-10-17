@@ -12,6 +12,7 @@ class DeviceControl {
   bool tick(uint32_t);
   void config(JsonDocument&);
   void status(JsonDocument&);
+  void ledStatus(JsonObject);
   int execute(const char*,JsonVariantConst,JsonDocument&);
   void restartLater();
   bool resetAll();
