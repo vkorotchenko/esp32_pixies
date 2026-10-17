@@ -74,7 +74,21 @@ export async function download(
 ): Promise<string> {
   checkCanceled(signal);
   const directory = `${Dirs.CacheDir}/pixies-updates`;
-  await FileSystem.mkdir(directory);
+  if (!(await FileSystem.isDir(directory))) {
+    try {
+      await FileSystem.mkdir(directory);
+    } catch (error) {
+      // Another operation may have created it after the directory check.
+      if (
+        !record(error) ||
+        error.code !== 'EEXIST' ||
+        !(await FileSystem.isDir(directory))
+      ) {
+        throw error;
+      }
+    }
+  }
+  checkCanceled(signal);
   const path = `${directory}/pixies-${asset.sha256}${
     asset.name.endsWith('.apk') ? '.apk' : '.bin'
   }`;
