@@ -6,12 +6,40 @@ import {
   previewDelay, createApi, parseReply, checkSnapshot, checkStatus, checkSession, checkPalettes,
   createUiState, editDraft, adoptSnapshot, acceptPreview, saveVerification, savePresentation,
   uploadFirmware,
+  checkPower, parsePower, powerProjection,
 } from "../app.js";
-import { configFixture, snapshotFixture, statusFixture, sessionFixture, palettesFixture } from "./fixtures.js";
+import { configFixture, snapshotFixture, statusFixture, sessionFixture, palettesFixture, powerFixture } from "./fixtures.js";
 
 const custom = () => ({ id: "porch", name: "Porch", colors: ["#ff8000", "#00aa00"] });
 const stateFixture = () => { const state = createUiState(); adoptSnapshot(state, snapshotFixture()); return state; };
 
+test("optional power status preserves legacy control and rejects inconsistent calibration or budgets", () => {
+  assert.equal(checkStatus(statusFixture()).power, undefined);
+  assert.deepEqual(checkStatus({ ...statusFixture(), power: powerFixture() }).power, powerFixture());
+  for (const power of [null, {}, powerFixture({ supplyWatts: "60" }), powerFixture({ revision: 0 }),
+    powerFixture({ budgetMa: 12000 }), powerFixture({ ready: false }), powerFixture({ volts: 12 }),
+    powerFixture({ ledMilliWatts: 0 }), powerFixture({ recovery: "invalid_record" })]) {
+    assert.throws(() => checkStatus({ ...statusFixture(), power }));
+  }
+  assert.equal(checkPower(powerFixture({ ready: false, budgetMa: 0, recovery: "invalid_record" })).ready, false);
+});
+test("power input units, limits and decimal syntax are explicit", () => {
+  assert.deepEqual(parsePower("60", "0,3"), { supplyWatts: 60, ledMilliWatts: 300 });
+  assert.deepEqual(parsePower("1", ".01"), { supplyWatts: 1, ledMilliWatts: 10 });
+  assert.deepEqual(parsePower("2000", "10"), { supplyWatts: 2000, ledMilliWatts: 10000 });
+  for (const supply of ["", "0", "2001", "1.1", "1e2", "-1"]) assert.throws(() => parsePower(supply, "0.3"));
+  for (const led of ["", "NaN", "Infinity", "0.009", "10.001", "0.3001", "3e-1", "0,3.0"]) assert.throws(() => parsePower("60", led));
+});
+test("power warnings use conservative full-white demand, standby and exact 80% thresholds", () => {
+  const profile = powerFixture({ supplyWatts: 20, budgetMa: 3200 });
+  assert.equal(powerProjection(200, 25, profile).requested, 16000);
+  assert.equal(powerProjection(200, 25, profile).warning, false);
+  assert.equal(powerProjection(200, 26, profile).warning, true);
+  assert.match(powerProjection(200, 100, profile).message, /supply rating exceeded/);
+  assert.equal(powerProjection(200, 100, powerFixture()).budget, 45000);
+  assert.match(powerProjection(1000, 0, powerFixture({ supplyWatts: 1, budgetMa: 160 })).message, /standby alone/);
+  assert.match(powerProjection(200, 25, powerFixture({ ready: false, budgetMa: 0 })).message, /output disabled/);
+});
 test("all integer boundaries and strict complete-object validation match firmware schema", () => {
   for (const count of [1, 200, 1000]) assert.deepEqual(validateConfig(configFixture({ ledCount: count })), {});
   for (const count of [0, 1001, 1.1, "200", null, true, NaN, Infinity]) assert.ok(validateConfig(configFixture({ ledCount: count })).ledCount);

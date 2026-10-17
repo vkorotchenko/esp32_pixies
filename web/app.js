@@ -13,6 +13,36 @@ const byteLength = value => new TextEncoder().encode(value).length;
 const colorPattern = /^#[0-9a-f]{6}$/i;
 const idPattern = /^[a-z0-9_-]{1,24}$/;
 
+export function checkPower(value) {
+  if (!object(value) || !integer(value.revision, 1, 0xffffffff) ||
+      !integer(value.supplyWatts, 1, 2000) || !integer(value.ledMilliWatts, 10, 10000) ||
+      !integer(value.headroomPercent, 1, 99) || value.volts !== 5 ||
+      !integer(value.maximumMa, 1000, 9000) || !integer(value.budgetMa, 0, 9000) ||
+      typeof value.ready !== "boolean" ||
+      !["none", "missing", "invalid_record", "storage_unavailable"].includes(value.recovery) ||
+      value.ready !== ["none", "missing"].includes(value.recovery)) throw protocolError();
+  const expected = Math.min(value.maximumMa, Math.floor(value.supplyWatts * 1000 * (100 - value.headroomPercent) / (100 * value.volts)));
+  if (value.budgetMa !== (value.ready ? expected : 0)) throw protocolError();
+  return value;
+}
+export function parsePower(supply, led) {
+  if (!/^\d{1,4}$/.test(supply) || !integer(Number(supply), 1, 2000)) throw new ApiError("validation", "Supply rating must be a whole number from 1 to 2000 W.", { field: "supplyWatts" });
+  const normalized = led.replace(",", ".");
+  const ledMilliWatts = Math.round(Number(normalized) * 1000);
+  if (!/^(?:\d+(?:\.\d{0,3})?|\.\d{1,3})$/.test(normalized) || !integer(ledMilliWatts, 10, 10000)) throw new ApiError("validation", "LED power must be 0.01 to 10 W, with at most three decimal places.", { field: "ledMilliWatts" });
+  return { supplyWatts: Number(supply), ledMilliWatts };
+}
+export function powerProjection(count, brightness, profile) {
+  const requested = count * profile.volts + Math.ceil(count * profile.ledMilliWatts * brightness / 100);
+  const budget = profile.budgetMa * profile.volts;
+  return {
+    requested, budget,
+    warning: !profile.ready || requested > budget,
+    message: !profile.ready ? "LED output disabled: the power profile could not be loaded. Verify and save power settings below."
+      : count > profile.budgetMa ? "Warning: LED standby alone exceeds the budget. RGB output is off; change the physical setup or supply."
+      : `${requested > profile.supplyWatts * 1000 ? "Warning: supply rating exceeded. " : requested > budget ? "Warning: output budget exceeded. " : ""}Full-white estimate at ${brightness}%: ${(requested / 1000).toFixed(1)} W / ${(budget / 1000).toFixed(1)} W budget. Output is automatically limited when needed.`,
+  };
+}
 export function validateConfig(config) {
   const errors = {};
   if (!exactKeys(config, CONFIG_KEYS)) errors.config = "A complete lighting configuration with no extra fields is required.";
@@ -159,6 +189,7 @@ export function checkStatus(data) {
   const boolPaths = ["firmware.memoryMatches", "settings.dirty", "settings.restartRequired", "settings.savedRestartRequired", "led.ready", "led.limited", "led.pausedForUpdate", "network.connected", "network.apOpen", "network.wifiSaved", "admin.configured", "admin.claimAllowed", "update.busy", "restarting"];
   const get = path => path.split(".").reduce((value, key) => value?.[key], data);
   if (data?.schemaVersion !== 1 || stringPaths.some(p => typeof get(p) !== "string") || numberPaths.some(p => !Number.isSafeInteger(get(p))) || boolPaths.some(p => typeof get(p) !== "boolean") || !/^[a-f0-9]{16}$/i.test(data.bootId)) throw protocolError();
+  if (data.power !== undefined) checkPower(data.power);
   return data;
 }
 export function checkPalettes(data) {
@@ -266,6 +297,7 @@ function startApp() {
   let pollTimer, previewTimer, previewFlight = null, polling = false, lastPreview = -Infinity;
   let themeKey = "", customKey = "", sceneKey = "", editor = null, editorOriginal = "", confirmResolve = null, countEditing = false;
   let retryAt = 0, scanRequested = false, wifiAttempt = null, rebootWait = null, saveAttempt = null, persistenceConfirmed = false;
+  let powerDraft = null, powerEditing = false;
   const api = createApi({ getCsrf: () => csrf, onUnauthorized: expireSession });
   const node = (tag, text, className) => {
     const element = document.createElement(tag);
@@ -414,6 +446,7 @@ function startApp() {
     $("resume-current").hidden = !rebootWait?.expired || !state.online || Boolean(status?.update.busy || status?.restarting);
     renderAuth();
     if (status) renderStatus();
+    renderPower();
     $("apply-palette").disabled = block;
     $("add-color").disabled = block || (editor?.colors.length || 0) >= 8;
   }
@@ -455,6 +488,43 @@ function startApp() {
     if (!fw.memoryMatches) reasons.push("Detected flash/PSRAM differs from the expected hardware. Verify the carrier and module.");
     text("recovery-state", reasons.join(" ")); $("recovery-state").hidden = !reasons.length;
     text("device-update-state", `Device update state: ${update.state}${update.error ? " · " + update.error : ""}${status.restarting ? " · restart scheduled" : ""}`);
+  }
+  function renderPower() {
+    const profile = status?.power;
+    for (const id of ["supply-watts", "led-watts", "save-power", "reload-power"]) $(id).disabled ||= !profile;
+    if (!profile) {
+      text("power-settings-state", status ? "Update controller firmware to configure power. Existing lighting controls and current limiting still work." : "Connect to read controller power settings.");
+      text("power-projection", "Power estimates appear after connecting to compatible firmware.");
+      return;
+    }
+    if (!powerDraft || (!powerEditing && (powerDraft.bootId !== status.bootId || powerDraft.revision !== profile.revision))) {
+      $("supply-watts").value = profile.supplyWatts;
+      $("led-watts").value = profile.ledMilliWatts / 1000;
+      powerDraft = { bootId: status.bootId, revision: profile.revision };
+    }
+    const changed = powerDraft.bootId !== status.bootId || powerDraft.revision !== profile.revision;
+    $("save-power").disabled ||= changed;
+    text("power-settings-state", changed ? "Power settings changed on the device. Your edits are retained; Reload power settings before saving."
+      : !profile.ready ? `Power profile unavailable (${profile.recovery}). Output stays disabled until valid settings are saved.`
+      : profile.recovery === "missing" ? "Default 60 W / 0.3 W profile. Confirm your actual ratings, then Save." : "Power settings are confirmed stored on this controller.");
+    let proposal = profile;
+    fieldError("supply-watts", ""); fieldError("led-watts", "");
+    try {
+      const config = parsePower($("supply-watts").value, $("led-watts").value);
+      proposal = { ...profile, ...config, ready: true, budgetMa: Math.min(profile.maximumMa, Math.floor(config.supplyWatts * 1000 * (100 - profile.headroomPercent) / (100 * profile.volts))) };
+    } catch (error) {
+      $("save-power").disabled = true;
+      fieldError(error.field === "supplyWatts" ? "supply-watts" : "led-watts", error.message);
+    }
+    const entered = Number($("led-count").value);
+    const count = Math.max(state.device?.activeLedCount ?? 0, state.draft?.ledCount ?? 0, integer(entered, 1, 1000) ? entered : 0);
+    const brightness = state.draft?.brightness ?? 0;
+    const live = powerProjection(count, brightness, profile);
+    const projected = powerProjection(count, brightness, proposal);
+    text("power-projection", live.message);
+    $("power-projection").classList.toggle("warning", live.warning);
+    text("power-settings-projection", `After saving: ${projected.message}`);
+    $("power-settings-projection").classList.toggle("warning", projected.warning);
   }
   function formatUptime(ms) {
     const minutes = Math.floor(ms / 60000);
@@ -665,6 +735,33 @@ function startApp() {
     fieldError("led-count", "");
     // Do not rerender an unfinished number field; only update the save affordance.
     $("save").disabled = locked() || !hasUnsaved();
+    renderPower();
+  });
+  for (const id of ["supply-watts", "led-watts"]) $(id).addEventListener("input", () => {
+    powerEditing = true; render();
+  });
+  $("reload-power").addEventListener("click", () => {
+    powerDraft = null; powerEditing = false; clearError(); render();
+  });
+  $("power-form").addEventListener("submit", event => {
+    event.preventDefault();
+    if (locked() || !status?.power || !powerDraft) return;
+    const baseline = { ...powerDraft };
+    if (baseline.bootId !== status.bootId || baseline.revision !== status.power.revision) {
+      showError(new Error("Reload power settings before saving a changed device profile.")); return;
+    }
+    let config;
+    try { config = parsePower($("supply-watts").value, $("led-watts").value); }
+    catch (error) { showError(error); return; }
+    runBusy("Saving power", async () => {
+      const response = checkStatus(await api("/api/power", { method: "PUT", admin: true, body: { baseRevision: baseline.revision, power: config } }));
+      if (response.bootId !== baseline.bootId || !response.power?.ready || response.power.revision <= baseline.revision ||
+          response.power.supplyWatts !== config.supplyWatts || response.power.ledMilliWatts !== config.ledMilliWatts) {
+        throw new ApiError("protocol", "Power Save was not confirmed. Refresh device status before retrying.", { uncertain: true });
+      }
+      status = response; powerEditing = false; powerDraft = null;
+      notice("Power settings saved and active. No restart needed; lighting drafts and saved LED counts are unchanged.");
+    });
   });
   $("stay-ap").addEventListener("click", () => {
     notice("AP-only use needs no router configuration. Stay connected to the protected Pixies hotspot and use the lighting controls.");

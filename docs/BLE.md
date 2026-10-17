@@ -67,6 +67,7 @@ state rather than automatically replaying a Save, restart, or credentials.
 | `palettes` | `{}` | Three built-ins plus current custom palettes |
 | `config.set` | `{"baseRevision":n,"config":{...}}` | Atomic RAM preview, new revision |
 | `config.save` | `{"baseRevision":n}` | Checked NVS Save, same config envelope |
+| `power.save` | `{"baseRevision":n,"power":{"supplyWatts":60,"ledMilliWatts":300}}` | Checked independent power Save, complete status envelope; no restart |
 | `wifi.scan` | `{}` | 202, asynchronous ESP-side scan started |
 | `wifi.scan.get` | `{}` | Scan state and up to 20 networks |
 | `wifi.connect` | `{"ssid":"...","password":"..."}` | 202, candidate testing started |
@@ -90,6 +91,23 @@ do not replace previously saved credentials. Passwords are never echoed.
 Both transports share configuration, revisions, Save, network operations and
 OTA/restart busy checks. A browser edit can cause a BLE revision conflict:
 reload deliberately rather than silently overwriting another controller.
+
+## Power profile
+
+Power-capable status includes `power` with its own per-boot revision, supply
+watts, full-brightness LED milliwatts, fixed 5 V/headroom, hardware/effective mA
+limits and recovery/readiness. Use **that** revision in `power.save`, not the
+lighting revision. The paired encrypted session authorizes power editing; no
+website login is required. All normal OTA/restart busy checks still apply.
+
+Defaults are 60 W and 300 mW/LED. Firmware enforces 80% supply output with the
+compiled 9 A ceiling, including standby allowance. Validate/save before applying;
+failed persistence preserves the previous live limits. Invalid existing power
+records disable RGB until repaired, while missing profiles use defaults without
+changing saved lighting. See [power units, exact limits and warnings](API.md#power-profile).
+
+Older firmware lacks `status.power`; keep lighting usable and explicitly disable
+power editing instead of adding fields to its strict lighting configuration.
 
 ## BLE firmware OTA
 

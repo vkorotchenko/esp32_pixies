@@ -13,7 +13,7 @@ bool SettingsStore::begin() {
   const bool s=settings_.begin("px-settings",false);
   const bool c=credentials_.begin("px-creds",false);
   ready_=s&&c;
-  if(!ready_) { settingsRecovery="storage_unavailable"; credentialRecovery="storage_unavailable"; }
+  if(!ready_) { settingsRecovery="storage_unavailable"; credentialRecovery="storage_unavailable"; powerRecovery="storage_unavailable"; }
   return ready_;
 }
 bool SettingsStore::read(Preferences& prefs,const char* key,uint8_t* out,size_t cap,size_t& length) {
@@ -66,6 +66,29 @@ bool SettingsStore::saveSettings(const pixies::Settings& s) {
   if(ok) settingsRecovery="none";
   return ok;
 }
+bool SettingsStore::loadPower(pixies::PowerSettings& out) {
+  if(!ready_) { powerRecovery="storage_unavailable"; return false; }
+  const bool exists=settings_.isKey("power");
+  uint8_t data[256]{}; size_t n=0;
+  if(!read(settings_,"power",data,sizeof data,n)) {
+    powerRecovery=exists ? "invalid_record" : "missing"; return false;
+  }
+  StaticJsonDocument<256> doc; const char* field;
+  const bool ok=pixies::completeJsonObject(reinterpret_cast<const char*>(data),n)&&
+    !deserializeJson(doc,data,n,DeserializationOption::NestingLimit(2))&&
+    pixies::readPowerSettings(doc.as<JsonVariantConst>(),out,field);
+  powerRecovery=ok ? "none" : "invalid_record"; return ok;
+}
+bool SettingsStore::savePower(const pixies::PowerSettings& value) {
+  const char* field;
+  if(!pixies::validatePower(value,field)) return false;
+  StaticJsonDocument<256> doc;
+  pixies::writePowerSettings(doc.to<JsonObject>(),value);
+  String text; serializeJson(doc,text);
+  const bool ok=!doc.overflowed()&&write(settings_,"power",reinterpret_cast<const uint8_t*>(text.c_str()),text.length());
+  if(ok) powerRecovery="none";
+  return ok;
+}
 bool SettingsStore::loadWifi(WifiCredential& wifi) {
   size_t n=0;
   WifiCredential temp;
@@ -98,5 +121,5 @@ bool SettingsStore::factoryReset() {
   // Separate namespaces deliberately; a partial erase is an explicit error.
   const bool s=settings_.clear();
   const bool c=credentials_.clear();
-  return s&&c&&!settings_.isKey("record")&&!credentials_.isKey("wifi")&&!credentials_.isKey("admin");
+  return s&&c&&!settings_.isKey("record")&&!settings_.isKey("power")&&!credentials_.isKey("wifi")&&!credentials_.isKey("admin");
 }

@@ -35,6 +35,8 @@ bool wifiPassword(JsonVariantConst v) {
 void DeviceControl::begin() {
   char id[17]; snprintf(id,sizeof id,"%08lx%08lx",static_cast<unsigned long>(esp_random()),static_cast<unsigned long>(esp_random()));
   bootId=id; admin.begin();
+  leds.powerReady=store.loadPower(leds.powerSettings);
+  if(!strcmp(store.powerRecovery,"missing")) leds.powerReady=true;
 }
 void DeviceControl::restartLater() { restarting=true; restartAt=millis(); }
 bool DeviceControl::resetAll() {
@@ -71,6 +73,7 @@ void DeviceControl::status(JsonDocument& doc) {
   s["savedRestartRequired"]=settings.persisted.ledCount!=settings.activeCount;
   s["recovery"]=store.settingsRecovery;
   ledStatus(doc.createNestedObject("led"));
+  powerStatus(doc.createNestedObject("power"));
   auto net=doc.createNestedObject("network");
   net["state"]=network.state; net["hostname"]=network.hostname+".local";
   net["connected"]=WiFi.status()==WL_CONNECTED;
@@ -94,13 +97,25 @@ void DeviceControl::ledStatus(JsonObject led) {
   led["ready"]=leds.ready; led["gpio"]=PIXIES_LED_PIN;
   led["protocol"]=PIXIES_LED_WS2811?"WS2811":"WS2812x";
   led["order"]=PIXIES_COLOR_GRB?"GRB":"RGB";
-  led["maxCount"]=pixies::kMaxLeds; led["budgetMa"]=PIXIES_CURRENT_MA;
+  led["maxCount"]=pixies::kMaxLeds; led["budgetMa"]=leds.powerBudgetMa();
   led["estimatedMa"]=leds.power.estimatedMa; led["requestedMa"]=leds.power.requestedMa;
   led["limited"]=leds.power.limited; led["scalePermille"]=leds.power.scalePermille;
+  led["standbyExceedsBudget"]=leds.power.standbyExceedsBudget;
   led["frames"]=leds.frames; led["pausedForUpdate"]=ota.busy;
   led["activeLedCount"]=settings.activeCount; led["requestedLedCount"]=settings.live.ledCount;
   led["on"]=settings.live.on; led["brightness"]=settings.live.brightness;
   led["effect"]=pixies::effectName(settings.live.effect); led["paletteId"]=settings.live.paletteId;
+}
+void DeviceControl::powerStatus(JsonObject power) {
+  power["revision"]=powerRevision;
+  power["supplyWatts"]=leds.powerSettings.supplyWatts;
+  power["ledMilliWatts"]=leds.powerSettings.ledMilliWatts;
+  power["headroomPercent"]=pixies::kPowerHeadroomPercent;
+  power["volts"]=pixies::kLedSupplyVolts;
+  power["maximumMa"]=PIXIES_CURRENT_MA;
+  power["budgetMa"]=leds.powerBudgetMa();
+  power["ready"]=leds.powerReady;
+  power["recovery"]=store.powerRecovery;
 }
 int DeviceControl::execute(const char* op,JsonVariantConst args,JsonDocument& out) {
   out.clear();
@@ -127,6 +142,21 @@ int DeviceControl::execute(const char* op,JsonVariantConst args,JsonDocument& ou
     return 200;
   }
   if(ota.busy||restarting) return failure(out,409,"busy","Update or restart in progress");
+  if(!strcmp(op,"power.save")) {
+    if(!fields(args,{"baseRevision","power"})) return bad();
+    const auto revision=args["baseRevision"];
+    if(!revision.is<uint32_t>()||revision.is<bool>())
+      return failure(out,422,"validation","baseRevision must be an integer","baseRevision");
+    if(revision.as<uint32_t>()!=powerRevision||powerRevision==UINT32_MAX)
+      return failure(out,409,"revision_conflict","Refresh power settings before retrying");
+    pixies::PowerSettings candidate; const char* field;
+    if(!pixies::readPowerSettings(args["power"],candidate,field))
+      return failure(out,422,"validation","Supply must be 1..2000 W; LED power must be 10..10000 mW",field);
+    if(!store.savePower(candidate))
+      return failure(out,500,"storage_failed","Power settings were not confirmed saved; previous limits remain active");
+    leds.powerSettings=candidate; leds.powerReady=true; ++powerRevision;
+    status(out); return 200;
+  }
   if(!strcmp(op,"config.set")||!strcmp(op,"config.save")) {
     const bool preview=!strcmp(op,"config.set");
     if(preview?!fields(args,{"baseRevision","config"}):!fields(args,{"baseRevision"})) return bad();

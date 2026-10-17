@@ -3,14 +3,15 @@
 import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
-import { configFixture, snapshotFixture, palettesFixture, sessionFixture, statusFixture } from "./fixtures.js";
-import { normalizeConfig, sameConfig } from "../app.js";
+import { configFixture, snapshotFixture, palettesFixture, sessionFixture, statusFixture, powerFixture } from "./fixtures.js";
+import { normalizeConfig, sameConfig, checkPower } from "../app.js";
 
 export async function startFixtureServer(port = 4173) {
   const token = "a".repeat(64); // Public synthetic test credential, never a real session.
   let current, saved, deviceStatus, configured, authenticated, scan, flags, calls, generation;
   function reset() {
     current = snapshotFixture(); saved = configFixture(); deviceStatus = statusFixture();
+    deviceStatus.power = powerFixture();
     configured = false; authenticated = false; scan = "idle"; flags = {}; calls = []; generation = 0;
   }
   reset();
@@ -26,6 +27,7 @@ export async function startFixtureServer(port = 4173) {
     current = snapshotFixture(saved, { bootId: generation.toString(16).padStart(16, "0"), activeLedCount: saved.ledCount, savedLedCount: saved.ledCount, restartRequired: false, savedRestartRequired: false });
     authenticated = false; deviceStatus.update = statusFixture().update; deviceStatus.restarting = false;
     deviceStatus.firmware.version = version; refresh();
+    if (deviceStatus.power) deviceStatus.power.revision = 1;
   }
   const json = (res, code, value, headers = {}) => {
     const data = JSON.stringify(value);
@@ -57,6 +59,8 @@ export async function startFixtureServer(port = 4173) {
         }
         if (body.boot) boot();
         if (body.limited) Object.assign(deviceStatus.led, { limited: true, estimatedMa: 8999, requestedMa: 11900, scalePermille: 756 });
+        if (body.legacyPower) delete deviceStatus.power;
+        if (body.power) deviceStatus.power = { ...deviceStatus.power, ...body.power };
         Object.assign(flags, body);
         return json(res, 200, { fixture: true });
       }
@@ -69,7 +73,7 @@ export async function startFixtureServer(port = 4173) {
       }
       calls.push({ method: req.method, path, time: Date.now(), ...(path === "/api/update" ? { bytes: bytes.length, duringUpload: true } : {}) });
       if (req.method !== "GET" && (req.headers["x-pixies-request"] !== "1" || req.headers["content-type"] !== (path === "/api/update" ? "application/octet-stream" : "application/json"))) return fail(res, 415, "content_type", "Fixture requires exact contract headers");
-      const adminPath = ["/api/auth/logout", "/api/wifi/scan", "/api/wifi/connect", "/api/wifi/reset", "/api/restart", "/api/factory-reset", "/api/update"].includes(path);
+      const adminPath = ["/api/auth/logout", "/api/power", "/api/wifi/scan", "/api/wifi/connect", "/api/wifi/reset", "/api/restart", "/api/factory-reset", "/api/update"].includes(path);
       if (adminPath && (!authenticated || !req.headers.cookie?.includes("pixies_session=fixture-only"))) return fail(res, 401, "authentication", "Synthetic session expired");
       if (adminPath && req.method !== "GET" && req.headers["x-csrf-token"] !== token) return fail(res, 403, "csrf");
       if (req.method === "GET") {
@@ -82,6 +86,20 @@ export async function startFixtureServer(port = 4173) {
         if (path === "/api/palettes") return json(res, 200, { palettes: [...palettesFixture(), ...current.config.customPalettes.map(p => ({ ...p, builtin: false }))] });
         if (path === "/api/auth/session") return json(res, 200, { ...session(), claimAllowed: !configured && !flags.claimForbidden });
         if (path === "/api/wifi/scan") return json(res, 200, { state: scan, networks: scan === "complete" ? [{ ssid: '<img src=x onerror="window.injected=true">', rssi: -61, channel: 6, open: false }, { ssid: "Test Home", rssi: -45, channel: 1, open: false }, { ssid: "Open porch", rssi: -72, channel: 11, open: true }] : [], truncated: false });
+      }
+      if (path === "/api/power" && req.method === "PUT") {
+        const previous = deviceStatus.power;
+        if (!previous) return fail(res, 404, "not_found");
+        if (flags.powerConflict) { previous.revision++; flags.powerConflict = false; }
+        if (body.baseRevision !== previous.revision) return fail(res, 409, "revision_conflict", "Power settings changed on another controller");
+        if (flags.powerSave === "storage_failed") { flags.powerSave = ""; return fail(res, 500, "storage_failed", "Synthetic power persistence failure"); }
+        if (!body.power || Object.keys(body).sort().join(",") !== "baseRevision,power" ||
+          Object.keys(body.power).sort().join(",") !== "ledMilliWatts,supplyWatts") return fail(res, 400, "invalid_json");
+        const next = { ...previous, ...body.power, revision: previous.revision + 1, ready: true, recovery: "none",
+          budgetMa: Math.min(previous.maximumMa, Math.floor(body.power.supplyWatts * 1000 * (100 - previous.headroomPercent) / (100 * previous.volts))) };
+        try { checkPower(next); } catch { return fail(res, 422, "validation"); }
+        deviceStatus.power = next; deviceStatus.led.budgetMa = next.budgetMa;
+        return json(res, 200, refresh());
       }
       if (path === "/api/config" && req.method === "PUT") {
         if (flags.conflict) {

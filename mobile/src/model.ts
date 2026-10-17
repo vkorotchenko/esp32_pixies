@@ -60,6 +60,20 @@ export interface Status {
   };
   admin: { configured: boolean };
   update: { busy: boolean; bleOtaProtocol?: number };
+  power?: PowerStatus;
+}
+export interface PowerConfig {
+  supplyWatts: number;
+  ledMilliWatts: number;
+}
+export interface PowerStatus extends PowerConfig {
+  revision: number;
+  headroomPercent: number;
+  volts: number;
+  maximumMa: number;
+  budgetMa: number;
+  ready: boolean;
+  recovery: 'none' | 'missing' | 'invalid_record' | 'storage_unavailable';
 }
 export interface WifiNetwork {
   ssid: string;
@@ -74,6 +88,34 @@ export const record = (v: unknown): v is Record<string, unknown> =>
   v !== null && typeof v === 'object' && !Array.isArray(v);
 const integer = (v: unknown, min: number, max: number): v is number =>
   typeof v === 'number' && Number.isInteger(v) && v >= min && v <= max;
+export function isPowerStatus(v: unknown): v is PowerStatus {
+  if (
+    !record(v) ||
+    !integer(v.revision, 1, 0xffffffff) ||
+    !integer(v.supplyWatts, 1, 2000) ||
+    !integer(v.ledMilliWatts, 10, 10000) ||
+    !integer(v.headroomPercent, 1, 99) ||
+    v.volts !== 5 ||
+    !integer(v.maximumMa, 1000, 9000) ||
+    !integer(v.budgetMa, 0, 9000) ||
+    typeof v.ready !== 'boolean' ||
+    typeof v.recovery !== 'string' ||
+    !['none', 'missing', 'invalid_record', 'storage_unavailable'].includes(
+      v.recovery,
+    )
+  )
+    return false;
+  const expected = Math.min(
+    v.maximumMa,
+    Math.floor(
+      (v.supplyWatts * 1000 * (100 - v.headroomPercent)) / (100 * v.volts),
+    ),
+  );
+  return (
+    v.budgetMa === (v.ready ? expected : 0) &&
+    v.ready === ['none', 'missing'].includes(v.recovery)
+  );
+}
 export function isConfig(v: unknown): v is Config {
   if (
     !record(v) ||
@@ -161,7 +203,8 @@ function requireStatus(v: unknown): asserts v is Status {
     !record(v.admin) ||
     typeof v.admin.configured !== 'boolean' ||
     !record(v.update) ||
-    typeof v.update.busy !== 'boolean'
+    typeof v.update.busy !== 'boolean' ||
+    (v.power !== undefined && !isPowerStatus(v.power))
   ) {
     throw new Error('Incomplete device status. Reconnect and reload.');
   }

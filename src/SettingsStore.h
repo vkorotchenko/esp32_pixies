@@ -14,9 +14,12 @@ class SettingsStore {
  public:
   const char* settingsRecovery = "missing";
   const char* credentialRecovery = "none";
+  const char* powerRecovery = "missing";
   bool begin();
   bool loadSettings(pixies::Settings&);
   bool saveSettings(const pixies::Settings&);
+  bool loadPower(pixies::PowerSettings&);
+  bool savePower(const pixies::PowerSettings&);
   bool loadWifi(WifiCredential&);
   bool saveWifi(const WifiCredential&);
   bool loadAdmin(AdminVerifier&);

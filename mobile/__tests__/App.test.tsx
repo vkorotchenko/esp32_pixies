@@ -1,16 +1,24 @@
 import React from 'react';
 import TestRenderer, { act, ReactTestRenderer } from 'react-test-renderer';
-import { AppState, AppStateStatus, Platform, StyleSheet } from 'react-native';
+import {
+  AppState,
+  AppStateStatus,
+  BackHandler,
+  Platform,
+  StyleSheet,
+} from 'react-native';
 import App from '../App';
 import { PixiesClient } from '../src/client';
 import { isConfig, Snapshot } from '../src/model';
-import { healthFixture } from '../testFixtures/releases';
+import { healthFixture, powerFixture } from '../testFixtures/releases';
 import { releaseFixture } from '../testFixtures/releases';
 import {
   rememberedController,
   rememberController,
 } from '../src/controllerPreference';
 import { latestRelease, NoPublishedRelease } from '../src/releases';
+import { UpdatePanel } from '../src/UpdatePanel';
+import { PowerNotice } from '../src/PowerSettings';
 jest.mock('react-native-file-access', () => ({
   Dirs: { CacheDir: '/cache' },
   FileSystem: {},
@@ -82,19 +90,79 @@ afterEach(async () => {
   }
   jest.restoreAllMocks();
 });
-test('opens Lights immediately, with connection and update checks in separate attention tabs', async () => {
+function expectHome() {
+  expect(
+    StyleSheet.flatten(
+      rendered.root.findByProps({ testID: 'settings-panel' }).props.style,
+    ).display,
+  ).toBe('none');
+  expect(
+    rendered.root.findByProps({ testID: 'lighting-home' }).props
+      .importantForAccessibility,
+  ).toBe('auto');
+  expect(
+    rendered.root.findByProps({ accessibilityLabel: 'LED count' }),
+  ).toBeDefined();
+}
+async function openSettings(name: string) {
+  await act(async () =>
+    rendered.root
+      .findByProps({ testID: 'settings-menu-toggle' })
+      .props.onPress(),
+  );
+  await act(async () =>
+    rendered.root.findByProps({ label: name }).props.onPress(),
+  );
+}
+async function expectAttention(name: string, value: boolean) {
+  await act(async () =>
+    rendered.root
+      .findByProps({ testID: 'settings-menu-toggle' })
+      .props.onPress(),
+  );
+  expect(rendered.root.findByProps({ label: name }).props.attention).toBe(
+    value,
+  );
+  await act(async () =>
+    rendered.root
+      .findByProps({ testID: 'settings-menu-toggle' })
+      .props.onPress(),
+  );
+}
+test('opens the full disabled Lights form immediately with settings hidden behind the icon', async () => {
   await act(async () => {
     rendered = TestRenderer.create(<App />);
   });
-  expect(rendered.root.findByProps({ label: 'Lights' }).props.selected).toBe(
+  expectHome();
+  expect(
+    rendered.root.findAllByProps({ testID: 'settings-dropdown' }),
+  ).toHaveLength(0);
+  expect(
+    rendered.root.findByProps({ testID: 'settings-menu-toggle' }).props
+      .accessibilityLabel,
+  ).toBe('Settings, attention needed');
+  await expectAttention('Connection', true);
+  await expectAttention('Updates', false);
+  expect(
+    rendered.root.findByProps({ accessibilityLabel: 'Lights on' }).props
+      .disabled,
+  ).toBe(true);
+  expect(
+    rendered.root.findByProps({ accessibilityLabel: 'brightness' }).props
+      .disabled,
+  ).toBe(true);
+  expect(
+    rendered.root.findByProps({ accessibilityLabel: 'LED count' }).props
+      .disabled,
+  ).toBe(true);
+  expect(rendered.root.findByProps({ label: 'Save' }).props.disabled).toBe(
     true,
   );
   expect(
-    rendered.root.findByProps({ label: 'Connection' }).props.attention,
-  ).toBe(true);
-  expect(rendered.root.findByProps({ label: 'Updates' }).props.attention).toBe(
-    false,
-  );
+    StyleSheet.flatten(
+      rendered.root.findByProps({ testID: 'lighting-controls' }).props.style,
+    ).opacity,
+  ).toBeLessThan(1);
   expect(
     StyleSheet.flatten(
       rendered.root.findByProps({ testID: 'updates-panel' }).props.style,
@@ -114,15 +182,9 @@ test('makes permission/connection errors visible rather than pretending to conne
   await act(async () => {
     rendered = TestRenderer.create(<App />);
   });
-  expect(rendered.root.findByProps({ label: 'Lights' }).props.selected).toBe(
-    true,
-  );
-  expect(
-    rendered.root.findByProps({ label: 'Connection' }).props.attention,
-  ).toBe(true);
-  await act(async () => {
-    rendered.root.findByProps({ label: 'Connection' }).props.onPress();
-  });
+  expectHome();
+  await expectAttention('Connection', true);
+  await openSettings('Connection');
   expect(
     rendered.root.findByProps({ testID: 'connection-status' }).props.children,
   ).toBe('Bluetooth permission denied');
@@ -167,12 +229,8 @@ async function connectController() {
     expect.objectContaining({ aborted: false }),
   );
   expect(rememberController).toHaveBeenCalledWith('original-id');
-  expect(rendered.root.findByProps({ label: 'Lights' }).props.selected).toBe(
-    true,
-  );
-  expect(
-    rendered.root.findByProps({ label: 'Connection' }).props.attention,
-  ).toBe(false);
+  expectHome();
+  await expectAttention('Connection', false);
 }
 test('reconnects the remembered native ID without scanning or switching away from Lights', async () => {
   const current = configuration();
@@ -194,9 +252,7 @@ test('reconnects the remembered native ID without scanning or switching away fro
   );
   expect(mockScan).not.toHaveBeenCalled();
   expect(command.mock.calls.map(([op]) => op)).toEqual(['config', 'status']);
-  expect(rendered.root.findByProps({ label: 'Lights' }).props.selected).toBe(
-    true,
-  );
+  expectHome();
 });
 test('never substitutes another controller when the remembered one cannot connect', async () => {
   jest.mocked(rememberedController).mockResolvedValue('missing-id');
@@ -206,12 +262,8 @@ test('never substitutes another controller when the remembered one cannot connec
   });
   expect(mockConnect).toHaveBeenCalledTimes(1);
   expect(mockScan).not.toHaveBeenCalled();
-  expect(rendered.root.findByProps({ label: 'Lights' }).props.selected).toBe(
-    true,
-  );
-  expect(
-    rendered.root.findByProps({ label: 'Connection' }).props.attention,
-  ).toBe(true);
+  expectHome();
+  await expectAttention('Connection', true);
 });
 test('multiple first-use controllers require a choice in Connection instead of guessing', async () => {
   mockScan.mockImplementation(async (found, _failed, ended) => {
@@ -223,12 +275,8 @@ test('multiple first-use controllers require a choice in Connection instead of g
     rendered = TestRenderer.create(<App />);
   });
   expect(mockConnect).not.toHaveBeenCalled();
-  expect(rendered.root.findByProps({ label: 'Lights' }).props.selected).toBe(
-    true,
-  );
-  await act(async () => {
-    rendered.root.findByProps({ label: 'Connection' }).props.onPress();
-  });
+  expectHome();
+  await openSettings('Connection');
   expect(
     rendered.root.findByProps({ label: 'pixies (-40 dBm)' }),
   ).toBeDefined();
@@ -236,26 +284,26 @@ test('multiple first-use controllers require a choice in Connection instead of g
     rendered.root.findByProps({ label: 'pixies (-60 dBm)' }),
   ).toBeDefined();
 });
-test('an available update lights the Updates badge without opening that tab or an installer', async () => {
+test('an available update marks the settings icon and Updates item without opening settings or an installer', async () => {
   jest.mocked(latestRelease).mockResolvedValue(releaseFixture());
   await act(async () => {
     rendered = TestRenderer.create(<App />);
   });
-  expect(rendered.root.findByProps({ label: 'Updates' }).props.attention).toBe(
-    true,
-  );
-  expect(rendered.root.findByProps({ label: 'Lights' }).props.selected).toBe(
-    true,
-  );
+  expectHome();
   expect(
     StyleSheet.flatten(
       rendered.root.findByProps({ testID: 'updates-panel' }).props.style,
     ).display,
   ).toBe('none');
+  await act(async () =>
+    rendered.root
+      .findByProps({ testID: 'settings-menu-toggle' })
+      .props.onPress(),
+  );
   const tab = rendered.root.findByProps({
     accessibilityLabel: 'Updates, attention needed',
   });
-  expect(tab.props.accessibilityRole).toBe('tab');
+  expect(tab.props.accessibilityRole).toBe('button');
   expect(
     tab.findAll(
       node =>
@@ -271,15 +319,9 @@ test('offline update checks never block the Lights screen and remain visible in 
   await act(async () => {
     rendered = TestRenderer.create(<App />);
   });
-  expect(rendered.root.findByProps({ label: 'Updates' }).props.attention).toBe(
-    true,
-  );
-  expect(rendered.root.findByProps({ label: 'Lights' }).props.selected).toBe(
-    true,
-  );
-  await act(async () => {
-    rendered.root.findByProps({ label: 'Updates' }).props.onPress();
-  });
+  expectHome();
+  await expectAttention('Updates', true);
+  await openSettings('Updates');
   expect(
     rendered.root.findByProps({ testID: 'update-check-status' }).props.children,
   ).toBe('Internet unavailable');
@@ -311,9 +353,7 @@ test('Bluetooth becoming available retries connection without changing the selec
     mockOnPoweredOn.mock.calls[0][0]();
   });
   expect(mockScan).toHaveBeenCalledTimes(2);
-  expect(rendered.root.findByProps({ label: 'Lights' }).props.selected).toBe(
-    true,
-  );
+  expectHome();
 });
 test('backgrounding cancels stale startup work and foregrounding starts one fresh attempt', async () => {
   let finish: (id: string | null) => void = () => {};
@@ -335,9 +375,7 @@ test('backgrounding cancels stale startup work and foregrounding starts one fres
     finish(null);
   });
   expect(mockScan).toHaveBeenCalledTimes(1);
-  expect(rendered.root.findByProps({ label: 'Lights' }).props.selected).toBe(
-    true,
-  );
+  expectHome();
 });
 test('unmounting prevents a late preference read from starting a Bluetooth operation', async () => {
   let finish: (id: string | null) => void = () => {};
@@ -369,16 +407,12 @@ test('manual disconnection stays disconnected until a later foreground session',
         : { ...healthFixture(), bootId: current.bootId },
     );
   await connectController();
-  await act(async () => {
-    rendered.root.findByProps({ label: 'Connection' }).props.onPress();
-  });
+  await openSettings('Connection');
   await act(async () => {
     rendered.root.findByProps({ label: 'Disconnect' }).props.onPress();
   });
   expect(mockConnect).toHaveBeenCalledTimes(1);
-  expect(
-    rendered.root.findByProps({ label: 'Connection' }).props.attention,
-  ).toBe(true);
+  await expectAttention('Connection', true);
   await act(async () => {
     lifecycle.forEach(listener => listener('background'));
   });
@@ -418,12 +452,8 @@ test('a failed preference read does not silently turn into first-use controller 
   });
   expect(mockScan).not.toHaveBeenCalled();
   expect(mockConnect).not.toHaveBeenCalled();
-  expect(rendered.root.findByProps({ label: 'Lights' }).props.selected).toBe(
-    true,
-  );
-  expect(
-    rendered.root.findByProps({ label: 'Connection' }).props.attention,
-  ).toBe(true);
+  expectHome();
+  await expectAttention('Connection', true);
 });
 test('Preview explains Save without implying a reboot or claiming unchanged saved settings are unsaved', async () => {
   const current = configuration();
@@ -453,6 +483,270 @@ test('Preview explains Save without implying a reboot or claiming unchanged save
     'status',
     'config.set',
   ]);
+});
+test('settings dismiss on outside tap and hardware Back; every page retains the same update component and lighting home', async () => {
+  let back: () => boolean | null | undefined = () => false;
+  jest
+    .spyOn(BackHandler, 'addEventListener')
+    .mockImplementation((_event, handler) => {
+      back = handler;
+      return { remove: jest.fn() };
+    });
+  await act(async () => {
+    rendered = TestRenderer.create(<App />);
+  });
+  const update = rendered.root.findByType(UpdatePanel);
+  const lights = rendered.root.findByProps({ testID: 'lighting-home' });
+  await act(async () =>
+    rendered.root
+      .findByProps({ testID: 'settings-menu-toggle' })
+      .props.onPress(),
+  );
+  await act(async () =>
+    rendered.root
+      .findByProps({ accessibilityLabel: 'Dismiss settings menu' })
+      .props.onPress(),
+  );
+  expect(
+    rendered.root.findByProps({ testID: 'settings-menu-toggle' }).props
+      .accessibilityState.expanded,
+  ).toBe(false);
+  await act(async () =>
+    rendered.root
+      .findByProps({ testID: 'settings-menu-toggle' })
+      .props.onPress(),
+  );
+  await act(async () => expect(back()).toBe(true));
+  expectHome();
+  for (const page of ['Updates', 'Connection', 'Wi-Fi', 'Device settings']) {
+    await openSettings(page);
+    expect(rendered.root.findByType(UpdatePanel)).toBe(update);
+    expect(rendered.root.findByProps({ testID: 'lighting-home' })).toBe(lights);
+    expect(lights.props.importantForAccessibility).toBe('no-hide-descendants');
+    await act(async () => expect(back()).toBe(true));
+    expectHome();
+  }
+  expect(back()).toBe(false);
+  expect(latestRelease).toHaveBeenCalledTimes(1);
+});
+test('disconnect retains authoritative values, discards drafts and never replays them on reconnect', async () => {
+  const current = configuration();
+  current.config.brightness = 31;
+  const command = jest
+    .spyOn(PixiesClient.prototype, 'command')
+    .mockImplementation(async op =>
+      op === 'config'
+        ? current
+        : { ...healthFixture(), bootId: current.bootId },
+    );
+  await connectController();
+  await act(async () =>
+    rendered.root
+      .findByProps({ accessibilityLabel: 'brightness' })
+      .props.onValueChange(90),
+  );
+  await openSettings('Connection');
+  await act(async () =>
+    rendered.root.findByProps({ label: 'Disconnect' }).props.onPress(),
+  );
+  const brightness = rendered.root.findByProps({
+    accessibilityLabel: 'brightness',
+  });
+  expect(brightness.props.value).toBe(31);
+  expect(brightness.props.disabled).toBe(true);
+  await act(async () =>
+    rendered.root
+      .findByProps({ label: 'Reconnect automatically' })
+      .props.onPress(),
+  );
+  expect(brightness.props.disabled).toBe(false);
+  expect(command.mock.calls.map(([op]) => op)).toEqual([
+    'config',
+    'status',
+    'config',
+    'status',
+  ]);
+});
+test.each([1, 333])(
+  'preserves a valid existing count of %s until the user moves the 25-step slider',
+  async ledCount => {
+    let current = configuration();
+    current = {
+      ...current,
+      activeLedCount: ledCount,
+      savedLedCount: ledCount,
+      requestedLedCount: ledCount,
+      config: { ...current.config, ledCount },
+    };
+    const command = jest
+      .spyOn(PixiesClient.prototype, 'command')
+      .mockImplementation(async (op, args) => {
+        if (op === 'status')
+          return { ...healthFixture(), bootId: current.bootId };
+        if (op === 'config') return current;
+        if (op === 'config.set' && isConfig(args?.config)) {
+          current = {
+            ...current,
+            config: args.config,
+            revision: current.revision + 1,
+            requestedLedCount: args.config.ledCount,
+            restartRequired: args.config.ledCount !== current.activeLedCount,
+          };
+          return current;
+        }
+        throw new Error(`Unexpected operation ${op}`);
+      });
+    await connectController();
+    expect(
+      rendered.root.findByProps({ accessibilityLabel: 'LED count' }).props,
+    ).toMatchObject({
+      minimumValue: 25,
+      maximumValue: 1000,
+      step: 25,
+    });
+    await act(async () =>
+      rendered.root.findByProps({ label: 'Preview' }).props.onPress(),
+    );
+    expect(command.mock.calls.at(-1)?.[1]?.config).toMatchObject({
+      ledCount,
+    });
+    await act(async () =>
+      rendered.root
+        .findByProps({ accessibilityLabel: 'LED count' })
+        .props.onValueChange(351),
+    );
+    await act(async () =>
+      rendered.root.findByProps({ label: 'Preview' }).props.onPress(),
+    );
+    expect(command.mock.calls.at(-1)?.[1]?.config).toMatchObject({
+      ledCount: 350,
+    });
+  },
+);
+test('power warnings retain the active physical count while a smaller count awaits restart', async () => {
+  const current = configuration();
+  current.activeLedCount = 900;
+  current.restartRequired = true;
+  current.savedRestartRequired = true;
+  jest.spyOn(PixiesClient.prototype, 'command').mockImplementation(async op =>
+    op === 'config'
+      ? current
+      : {
+          ...healthFixture(),
+          bootId: current.bootId,
+          power: powerFixture(),
+        },
+  );
+  await connectController();
+  await act(async () =>
+    rendered.root
+      .findByProps({ accessibilityLabel: 'LED count' })
+      .props.onValueChange(25),
+  );
+  expect(rendered.root.findByType(PowerNotice).props.count).toBe(900);
+});
+test.each(['success', 'storage failure', 'revision conflict', 'new boot'])(
+  'power Save is independent, checked and does not restart: %s',
+  async outcome => {
+    const current = configuration();
+    const health = {
+      ...healthFixture(),
+      bootId: current.bootId,
+      power: powerFixture(),
+    };
+    const command = jest
+      .spyOn(PixiesClient.prototype, 'command')
+      .mockImplementation(async (op, args) => {
+        if (op === 'config') return current;
+        if (op === 'status') return health;
+        if (op === 'power.save') {
+          expect(args).toEqual({
+            baseRevision: 1,
+            power: { supplyWatts: 20, ledMilliWatts: 600 },
+          });
+          if (outcome === 'storage failure' || outcome === 'revision conflict')
+            throw new Error(outcome);
+          return {
+            ...health,
+            bootId: outcome === 'new boot' ? 'different-boot' : current.bootId,
+            power: {
+              ...powerFixture(),
+              revision: 2,
+              supplyWatts: 20,
+              ledMilliWatts: 600,
+              budgetMa: 3200,
+            },
+          };
+        }
+        throw new Error(`Unexpected operation ${op}`);
+      });
+    await connectController();
+    await openSettings('Device settings');
+    await act(async () => {
+      rendered.root
+        .findByProps({ accessibilityLabel: 'Power supply wattage' })
+        .props.onChangeText('20');
+      rendered.root
+        .findByProps({ accessibilityLabel: 'Power per LED' })
+        .props.onChangeText('0,6');
+    });
+    await act(async () =>
+      rendered.root
+        .findByProps({ accessibilityLabel: 'Save power settings' })
+        .props.onPress(),
+    );
+    const message = rendered.root.findByProps({ testID: 'settings-status' })
+      .props.children;
+    expect(message).toBe(
+      outcome === 'success'
+        ? 'Power settings saved. Protection is active; no restart needed.'
+        : outcome === 'new boot'
+        ? 'Power save is not confirmed. Refresh device status before retrying.'
+        : outcome,
+    );
+    expect(command.mock.calls.map(([op]) => op)).toEqual([
+      'config',
+      'status',
+      'power.save',
+    ]);
+    expect(mockConnect).toHaveBeenCalledTimes(1);
+    if (outcome !== 'success') {
+      expect(
+        rendered.root.findByType(UpdatePanel).props.health.power.supplyWatts,
+      ).toBe(60);
+      expect(
+        rendered.root.findByProps({
+          accessibilityLabel: 'Power supply wattage',
+        }).props.value,
+      ).toBe('20');
+    }
+  },
+);
+test('older firmware keeps working lighting controls and explicitly disables unsupported power editing', async () => {
+  const current = configuration();
+  jest
+    .spyOn(PixiesClient.prototype, 'command')
+    .mockImplementation(async op =>
+      op === 'config'
+        ? current
+        : { ...healthFixture(), bootId: current.bootId },
+    );
+  await connectController();
+  expect(rendered.root.findByProps({ label: 'Save' }).props.disabled).toBe(
+    false,
+  );
+  await openSettings('Device settings');
+  expect(
+    rendered.root.findByProps({ accessibilityLabel: 'Power supply wattage' })
+      .props.editable,
+  ).toBe(false);
+  expect(
+    rendered.root.findByProps({ accessibilityLabel: 'Save power settings' })
+      .props.disabled,
+  ).toBe(true);
+  expect(JSON.stringify(rendered.toJSON())).toContain(
+    'Update controller firmware to configure supply wattage',
+  );
 });
 test.each([
   [false, false],
@@ -502,7 +796,7 @@ test.each([
       await act(async () => {
         rendered.root
           .findByProps({ accessibilityLabel: 'LED count' })
-          .props.onChangeText('333');
+          .props.onValueChange(333);
       });
     }
     const content = rendered.root.findByProps({
@@ -512,7 +806,7 @@ test.each([
       throw new Error('Status area has no layout parent');
     }
     const childCount = content.children.length;
-    expect(childCount).toBeGreaterThan(3);
+    expect(childCount).toBeGreaterThanOrEqual(2);
     const style = StyleSheet.flatten(
       rendered.root.findByProps({ testID: 'operation-status' }).props.style,
     );

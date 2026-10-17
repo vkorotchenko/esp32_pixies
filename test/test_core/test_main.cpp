@@ -126,6 +126,57 @@ void effects_power() {
   TEST_ASSERT_EQUAL_UINT64(30,clock.advance(20));
   TEST_ASSERT_TRUE(elapsed(10,UINT32_MAX-9,20));
 }
+void configurable_power_budget_and_calibrated_limits() {
+  PowerSettings profile; const char* field;
+  TEST_ASSERT_TRUE(validatePower(profile,field));
+  TEST_ASSERT_EQUAL(9000,powerBudgetMa(profile,9000));
+  profile.supplyWatts=20;
+  TEST_ASSERT_EQUAL(3200,powerBudgetMa(profile,9000));
+  TEST_ASSERT_EQUAL(2000,powerBudgetMa(profile,2000));
+  profile.supplyWatts=0; TEST_ASSERT_FALSE(validatePower(profile,field));
+  profile.supplyWatts=2001; TEST_ASSERT_FALSE(validatePower(profile,field));
+  profile.supplyWatts=60;
+  for(unsigned watts:{0,9,10001}) {
+    profile.ledMilliWatts=watts; TEST_ASSERT_FALSE(validatePower(profile,field));
+  }
+  Settings s; s.brightness=100; s.effect=Effect::Steady; s.customCount=1;
+  s.custom[0]={"white","White",1,{{{255,255,255}}}}; strcpy(s.paletteId,"white");
+  std::array<Rgb,1002> frame{};
+  TEST_ASSERT_EQUAL(61,render(s,0,frame.data(),1,9000,300).requestedMa);
+  TEST_ASSERT_EQUAL(121,render(s,0,frame.data(),1,9000,600).requestedMa);
+  frame.fill({});
+  for(unsigned supply:{1,5,20,60,2000}) for(unsigned led:{10,300,1000,10000}) {
+    profile.supplyWatts=supply; profile.ledMilliWatts=led;
+    const auto budget=powerBudgetMa(profile,9000);
+    for(unsigned count:{1,25,200,1000}) for(unsigned effect=0;effect<5;++effect) {
+      s.effect=Effect(effect);
+      const auto p=render(s,1234567,frame.data()+1,count,budget,led);
+      TEST_ASSERT_TRUE(frame.front()==Rgb{}); TEST_ASSERT_TRUE(frame[count+1]==Rgb{});
+      TEST_ASSERT_LESS_OR_EQUAL(budget>count?budget:count,p.estimatedMa);
+      TEST_ASSERT_GREATER_OR_EQUAL(p.estimatedMa,p.requestedMa);
+      TEST_ASSERT_EQUAL(count>budget,p.standbyExceedsBudget);
+      if(count>budget) for(size_t i=1;i<=count;++i) TEST_ASSERT_TRUE(frame[i]==Rgb{});
+      frame.fill({});
+    }
+  }
+  s.effect=Effect::Steady;
+  const auto disabled=render(s,0,frame.data(),200,0,300);
+  TEST_ASSERT_EQUAL(200,disabled.estimatedMa);
+  TEST_ASSERT_TRUE(disabled.limited); TEST_ASSERT_TRUE(disabled.standbyExceedsBudget);
+  for(size_t i=0;i<200;++i) TEST_ASSERT_TRUE(frame[i]==Rgb{});
+  DynamicJsonDocument doc(512); PowerSettings decoded;
+  profile={60,300}; writePowerSettings(doc.to<JsonObject>(),profile);
+  TEST_ASSERT_TRUE(readPowerSettings(doc.as<JsonVariantConst>(),decoded,field));
+  for(const char* key:{"supplyWatts","ledMilliWatts"}) {
+    const auto original=doc[key].as<unsigned>();
+    for(const char* invalid:{"true","1.5","-1","null"}) {
+      DynamicJsonDocument bad(32); deserializeJson(bad,invalid); doc[key]=bad.as<JsonVariantConst>();
+      TEST_ASSERT_FALSE(readPowerSettings(doc.as<JsonVariantConst>(),decoded,field));
+    }
+    doc[key]=original;
+  }
+  doc["extra"]=1; TEST_ASSERT_FALSE(readPowerSettings(doc.as<JsonVariantConst>(),decoded,field));
+}
 void decisions() {
   TEST_ASSERT_EQUAL(ConnectResult::Waiting,connectionDecision(true,false,14999));
   TEST_ASSERT_EQUAL(ConnectResult::FailedCandidate,connectionDecision(true,false,15000));
@@ -184,7 +235,7 @@ void login_throttling() {
 }
 int main() {
   UNITY_BEGIN(); RUN_TEST(clean_defaults_preserve_saved_choices); RUN_TEST(lengths); RUN_TEST(palettes); RUN_TEST(settings_json);
-  RUN_TEST(persistence_rules); RUN_TEST(effects_power); RUN_TEST(decisions);
+  RUN_TEST(persistence_rules); RUN_TEST(effects_power); RUN_TEST(configurable_power_budget_and_calibrated_limits); RUN_TEST(decisions);
   RUN_TEST(corrupt_records_and_images); RUN_TEST(login_throttling);
   return UNITY_END();
 }

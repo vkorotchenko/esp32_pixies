@@ -39,8 +39,33 @@ void unavailable_storage() {
   fake_nvs::failBegin=true; SettingsStore store;
   TEST_ASSERT_FALSE(store.begin()); TEST_ASSERT_FALSE(store.saveSettings(pixies::Settings{}));
   TEST_ASSERT_FALSE(store.resetWifi()); TEST_ASSERT_FALSE(store.factoryReset());
+  TEST_ASSERT_EQUAL_STRING("storage_unavailable",store.powerRecovery);
+}
+void independent_checked_power_record() {
+  SettingsStore unopened; pixies::PowerSettings unknown;
+  TEST_ASSERT_FALSE(unopened.loadPower(unknown));
+  TEST_ASSERT_EQUAL_STRING("storage_unavailable",unopened.powerRecovery);
+  SettingsStore store; TEST_ASSERT_TRUE(store.begin());
+  pixies::Settings lights; lights.ledCount=333; lights.on=false;
+  TEST_ASSERT_TRUE(store.saveSettings(lights));
+  pixies::PowerSettings power;
+  TEST_ASSERT_FALSE(store.loadPower(power)); TEST_ASSERT_EQUAL_STRING("missing",store.powerRecovery);
+  power={20,600}; TEST_ASSERT_TRUE(store.savePower(power));
+  pixies::PowerSettings restored; TEST_ASSERT_TRUE(store.loadPower(restored));
+  TEST_ASSERT_EQUAL(20,restored.supplyWatts); TEST_ASSERT_EQUAL(600,restored.ledMilliWatts);
+  TEST_ASSERT_TRUE(store.saveSettings(pixies::Settings{}));
+  TEST_ASSERT_TRUE(store.loadPower(restored)); TEST_ASSERT_EQUAL(20,restored.supplyWatts);
+  fake_nvs::failWrite=true; TEST_ASSERT_FALSE(store.savePower({60,300}));
+  fake_nvs::failWrite=false;
+  TEST_ASSERT_TRUE(store.loadPower(restored)); TEST_ASSERT_EQUAL(20,restored.supplyWatts);
+  fake_nvs::records["px-settings/power"].back()^=1;
+  TEST_ASSERT_FALSE(store.loadPower(restored)); TEST_ASSERT_EQUAL_STRING("invalid_record",store.powerRecovery);
+  pixies::Settings intact; TEST_ASSERT_TRUE(store.loadSettings(intact));
+  TEST_ASSERT_TRUE(store.savePower(power));
+  TEST_ASSERT_TRUE(store.factoryReset()); TEST_ASSERT_FALSE(store.loadPower(restored));
+  TEST_ASSERT_EQUAL_STRING("missing",store.powerRecovery);
 }
 int main() {
   UNITY_BEGIN(); RUN_TEST(actual_settings_adapter); RUN_TEST(separated_credentials_and_reset);
-  RUN_TEST(unavailable_storage); return UNITY_END();
+  RUN_TEST(unavailable_storage); RUN_TEST(independent_checked_power_record); return UNITY_END();
 }

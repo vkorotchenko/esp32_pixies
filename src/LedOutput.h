@@ -24,6 +24,11 @@ class LedOutput {
   void blank();
   void resume() { paused_=false; }
   pixies::Power power;
+  pixies::PowerSettings powerSettings;
+  bool powerReady=false;
+  uint32_t powerBudgetMa() const {
+    return powerReady ? pixies::powerBudgetMa(powerSettings,PIXIES_CURRENT_MA) : 0;
+  }
   uint32_t frames=0;
   bool ready=false;
  private:
