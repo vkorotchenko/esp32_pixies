@@ -14,6 +14,7 @@ const mockRemove = jest.fn();
 const mockRequestMultiple = jest.fn();
 const mockManager = {
   state: jest.fn(),
+  onStateChange: jest.fn(),
   startDeviceScan: jest.fn(),
   stopDeviceScan: jest.fn(),
   connectToDevice: jest.fn(),
@@ -56,6 +57,7 @@ beforeEach(() => {
     location: 'granted',
   });
   mockManager.state.mockResolvedValue('PoweredOn');
+  mockManager.onStateChange.mockReturnValue({ remove: mockRemove });
   mockManager.startDeviceScan.mockResolvedValue(undefined);
   mockManager.stopDeviceScan.mockResolvedValue(undefined);
   mockManager.connectToDevice.mockResolvedValue(mockDevice);
@@ -87,7 +89,12 @@ test('Android 12+ asks only for scan/connect and scans by the Pixies service', a
     expect.any(Function),
   );
   const callback = mockManager.startDeviceScan.mock.calls[0][2];
-  callback(null, { id: 'controller', localName: 'Pixies-0123456789ab', name: 'Cached old name', rssi: -55 });
+  callback(null, {
+    id: 'controller',
+    localName: 'Pixies-0123456789ab',
+    name: 'Cached old name',
+    rssi: -55,
+  });
   expect(found).toHaveBeenCalledWith({
     id: 'controller',
     name: 'pixies',
@@ -219,4 +226,118 @@ test('close removes listeners and destroy awaits and propagates native failures'
     new Error('Native teardown failed'),
   );
   await expect(bluetooth.destroy()).rejects.toThrow('Native teardown failed');
+});
+test('remembered-device connections still require Bluetooth permission and a powered radio', async () => {
+  mockRequestMultiple.mockResolvedValueOnce({});
+  await expect(
+    new Bluetooth().connect('controller', jest.fn()),
+  ).rejects.toThrow('Allow Bluetooth permissions');
+  mockManager.state.mockResolvedValueOnce('PoweredOff');
+  await expect(
+    new Bluetooth().connect('controller', jest.fn()),
+  ).rejects.toThrow('Turn on Bluetooth');
+  expect(mockManager.connectToDevice).not.toHaveBeenCalled();
+});
+test('canceling while permissions are pending never starts a late scan', async () => {
+  let allow: (value: object) => void = () => {};
+  mockRequestMultiple.mockReturnValueOnce(
+    new Promise(resolve => {
+      allow = resolve;
+    }),
+  );
+  const signal = new AbortController();
+  const scanning = new Bluetooth().scan(
+    jest.fn(),
+    jest.fn(),
+    jest.fn(),
+    signal.signal,
+  );
+  const result = scanning.catch((error: unknown) => error);
+  await jest.advanceTimersByTimeAsync(0);
+  signal.abort();
+  allow({ scan: 'granted', connect: 'granted' });
+  expect(await result).toEqual(
+    expect.objectContaining({ message: expect.stringContaining('canceled') }),
+  );
+  expect(mockManager.startDeviceScan).not.toHaveBeenCalled();
+});
+test('canceling a running scan clears its timeout and reports only cancellation', async () => {
+  const signal = new AbortController();
+  const failed = jest.fn(),
+    ended = jest.fn();
+  await new Bluetooth().scan(jest.fn(), failed, ended, signal.signal);
+  signal.abort();
+  await jest.advanceTimersByTimeAsync(10000);
+  expect(failed).toHaveBeenCalledTimes(1);
+  expect(ended).not.toHaveBeenCalled();
+});
+test('canceling a pending native connection closes it once before rejecting the attempt', async () => {
+  let rejectConnection: (error: Error) => void = () => {};
+  mockManager.connectToDevice.mockReturnValueOnce(
+    new Promise((_resolve, reject) => {
+      rejectConnection = reject;
+    }),
+  );
+  mockManager.cancelDeviceConnection.mockImplementationOnce(async () => {
+    rejectConnection(new Error('Native connection canceled'));
+    return mockDevice;
+  });
+  const signal = new AbortController();
+  const bluetooth = new Bluetooth();
+  const connecting = bluetooth.connect('controller', jest.fn(), signal.signal);
+  const result = connecting.catch((error: unknown) => error);
+  await jest.advanceTimersByTimeAsync(0);
+  signal.abort();
+  const destroying = bluetooth.destroy();
+  expect(await result).toEqual(
+    expect.objectContaining({ message: expect.stringContaining('canceled') }),
+  );
+  await destroying;
+  expect(mockManager.cancelDeviceConnection).toHaveBeenCalledTimes(1);
+});
+test('close during permission acquisition invalidates the old connection attempt', async () => {
+  let allow: (value: object) => void = () => {};
+  mockRequestMultiple.mockReturnValueOnce(
+    new Promise(resolve => {
+      allow = resolve;
+    }),
+  );
+  const bluetooth = new Bluetooth();
+  const connecting = bluetooth.connect('controller', jest.fn());
+  const result = connecting.catch((error: unknown) => error);
+  await jest.advanceTimersByTimeAsync(0);
+  await bluetooth.close();
+  allow({ scan: 'granted', connect: 'granted' });
+  expect(await result).toEqual(
+    expect.objectContaining({ message: expect.stringContaining('superseded') }),
+  );
+  expect(mockManager.connectToDevice).not.toHaveBeenCalled();
+});
+test('power-on monitoring only retries when Bluetooth becomes ready and removes its listener', () => {
+  const ready = jest.fn();
+  const stop = new Bluetooth().onPoweredOn(ready);
+  const changed = mockManager.onStateChange.mock.calls[0][0];
+  changed('PoweredOff');
+  changed('Unauthorized');
+  expect(ready).not.toHaveBeenCalled();
+  changed('PoweredOn');
+  expect(ready).toHaveBeenCalledTimes(1);
+  stop();
+  expect(mockRemove).toHaveBeenCalled();
+});
+test('a stopped scan cannot deliver late devices or errors into a later scan', async () => {
+  const bluetooth = new Bluetooth();
+  const oldFound = jest.fn(),
+    failed = jest.fn(),
+    nextFound = jest.fn();
+  await bluetooth.scan(oldFound, failed, jest.fn());
+  const oldCallback = mockManager.startDeviceScan.mock.calls[0][2];
+  await bluetooth.scan(nextFound, failed, jest.fn());
+  oldCallback(null, mockDevice);
+  oldCallback(new Error('Old radio error'), null);
+  expect(oldFound).not.toHaveBeenCalled();
+  expect(failed).not.toHaveBeenCalled();
+  mockManager.startDeviceScan.mock.calls[1][2](null, mockDevice);
+  expect(nextFound).toHaveBeenCalledTimes(1);
+  await bluetooth.stopScan();
 });

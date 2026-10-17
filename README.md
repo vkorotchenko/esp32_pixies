@@ -9,6 +9,12 @@ and phone-managed BLE firmware and Android app updates.
 No hotspot join, app account, or custom PIN is required. The website remains an
 optional local-network/fallback interface.
 
+The app opens on **Lights** while it reconnects the remembered controller and
+checks for updates. On first use, it auto-connects only if one controller appears
+in the scan. **Connection** and **Updates** have separate tabs with orange **!**
+attention badges; missing Bluetooth or Internet never forces you away from Lights.
+Firmware and Android app installation still require your approval.
+
 **Hardware status:** USB programming and startup were verified on the target
 module. Android BLE connection and lighting-control access are verified. The
 identified string uses WS2811 pixels; the WS2811/RGB output profile still needs
@@ -247,8 +253,9 @@ build flags, source, URLs, ordinary exports, or browser persistent storage.
 
 ## Releases and phone updates
 
-The app's **Updates** card works without an ESP connection for Android updates.
-Check for a published release, download and verify its APK, then approve Android's
+The app's **Updates** tab works without an ESP connection for Android updates.
+It checks published releases automatically without blocking Lights. Tap
+**Update Android app** to download a verified APK, then approve Android's
 installer. Allow **Install unknown apps** for Pixies if Android requests it.
 Opening that installer does not mean installation succeeded; the running app
 version confirms the result. iPhone app updates require Apple distribution.

@@ -8,8 +8,10 @@ cloud service, or mandatory website password.
 ## Use
 
 1. Install the Bluetooth-enabled Pixies firmware on the ESP once over USB.
-2. Install this app, enable Bluetooth, tap **Scan controllers**, and select Pixies.
-   Allow Bluetooth access and accept normal OS pairing if prompted.
+2. Open the app on **Lights** and enable Bluetooth. It reconnects your last
+   controller automatically. On first use, it scans for ten seconds and connects
+   only if exactly one controller appears. Allow Bluetooth access and accept
+   normal OS pairing if prompted. If several appear, choose one in **Connection**.
 3. Choose a theme/effect, adjust sliders/count/palettes, then **Preview** or
    **Save**. Save remembers your settings without restarting the ESP.
    Only a changed LED count needs Save followed by a manual Restart; themes,
@@ -33,10 +35,36 @@ Save feedback stays in the existing status area instead of inserting a loading
 row above the controls. A count-specific restart message appears only when the
 saved LED count actually differs from the active count.
 
+### Automatic startup and attention tabs
+
+**Lights** always opens first, even without Bluetooth, Internet, or a controller.
+It shows lighting settings only after reading them from the connected ESP.
+Connection attempts and release checks run independently without navigating away.
+
+The **Connection** tab shows an orange **!** while disconnected or if remembering
+the controller fails. The app stores only the last successful native device ID
+in its private documents directory. It never substitutes another nearby device
+when that remembered controller is unavailable. You can scan and choose another
+controller, retry, cancel an attempt, or disconnect in this tab.
+
+Returning to the app or turning Bluetooth on retries a missing connection.
+An unexpected disconnect also triggers a reconnection attempt; failed attempts
+remain in **Connection** rather than repeatedly prompting for pairing.
+Manual Disconnect pauses automatic connection until you reopen/foreground the
+app or explicitly retry. Backgrounding cancels pending connection work.
+
+The **Updates** tab shows an orange **!** for a newer compatible app or controller
+release, a pending APK installation, or a failed check/update. No published
+release is an informational state, not an update alert. Checks never lock the
+lighting controls. Both warning badges have accessible attention labels.
+
 ## Phone-managed updates
 
-The **Updates** card shows the installed app and connected firmware versions.
-Check for a stable GitHub release. Android can download its signed APK even
+The **Updates** tab shows the installed app and connected firmware versions.
+The app checks for a stable GitHub release on opening and foregrounding; you can
+also tap **Check for updates**. Downloads and installation always require your
+approval: startup never flashes the ESP or opens Android's installer.
+Android can download its signed APK even
 without a controller connection; allow **Install unknown apps** for Pixies and
 approve the Android installer. The app verifies size/hash, and Android preflight
 checks package, higher version code and the installed certificate. The installer
@@ -46,7 +74,8 @@ Firmware updates require a connected controller with BLE OTA capability.
 The app verifies the image, sends ordered acknowledged chunks, and checks a new
 boot ID plus the exact release version after reconnecting. Do not switch away,
 remove power or move out of range. Cancellation/backgrounding aborts incomplete
-work; after finalization, reconnect to establish what actually booted.
+work; after finalization, reconnect to establish what actually booted. Changing
+tabs inside Pixies does not discard an update or a verified pending APK.
 
 Firmware 0.2.2 and earlier needs one USB/browser upgrade to 0.3.0+ first.
 The old development-signed APK also needs a one-time uninstall/reinstall to

@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
   Alert,
+  AppState,
   Linking,
   Pressable,
   ScrollView,
@@ -16,6 +17,10 @@ import Slider from '@react-native-community/slider';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { Bluetooth, FoundDevice } from './src/ble';
 import { PixiesClient } from './src/client';
+import {
+  rememberedController,
+  rememberController,
+} from './src/controllerPreference';
 import { UpdatePanel } from './src/UpdatePanel';
 import { checkCanceled } from './src/updates';
 import {
@@ -56,11 +61,21 @@ type ButtonProps = {
   onPress: () => void;
   disabled?: boolean;
   selected?: boolean;
+  attention?: boolean;
+  role?: 'button' | 'tab';
 };
-function Button({ label, onPress, disabled, selected }: ButtonProps) {
+function Button({
+  label,
+  onPress,
+  disabled,
+  selected,
+  attention,
+  role = 'button',
+}: ButtonProps) {
   return (
     <Pressable
-      accessibilityRole="button"
+      accessibilityRole={role}
+      accessibilityLabel={attention ? `${label}, attention needed` : label}
       accessibilityState={{
         disabled,
         selected,
@@ -73,7 +88,18 @@ function Button({ label, onPress, disabled, selected }: ButtonProps) {
         disabled && styles.disabled,
       ]}
     >
-      <Text style={styles.buttonText}>{label}</Text>
+      <View style={styles.buttonContent}>
+        <Text style={styles.buttonText}>{label}</Text>
+        {attention !== undefined && (
+          <View
+            accessibilityElementsHidden
+            importantForAccessibility="no-hide-descendants"
+            style={[styles.badge, !attention && styles.invisible]}
+          >
+            <Text style={styles.badgeText}>!</Text>
+          </View>
+        )}
+      </View>
     </Pressable>
   );
 }
@@ -109,12 +135,26 @@ function Controller() {
   const working = useRef(false);
   const selectedDevice = useRef<FoundDevice | null>(null);
   const updating = useRef(false);
+  const mounted = useRef(false);
+  const foreground = useRef(AppState.currentState !== 'background');
+  const connectedRef = useRef(false);
+  const paused = useRef(false);
+  const autoRequested = useRef(false);
+  const automaticConnection = useRef<() => Promise<void>>(async () => {});
+  const connectionAttempt = useRef<AbortController | null>(null);
   const [busy, setBusy] = useState(false);
   const [scanning, setScanning] = useState(false);
   const [devices, setDevices] = useState<FoundDevice[]>([]);
   const [connected, setConnected] = useState<string | null>(null);
   const [message, setMessage] = useState('');
-  const [tab, setTab] = useState<'Lights' | 'Wi-Fi' | 'Device'>('Lights');
+  const [connectionMessage, setConnectionMessage] = useState(
+    'Connecting automatically...',
+  );
+  const [connectionError, setConnectionError] = useState(false);
+  const [updateAttention, setUpdateAttention] = useState(false);
+  const [tab, setTab] = useState<
+    'Lights' | 'Connection' | 'Updates' | 'Wi-Fi' | 'Device'
+  >('Lights');
   const [state, setState] = useState<Snapshot | null>(null);
   const [deviceStatus, setDeviceStatus] = useState<Status | null>(null);
   const [draft, setDraft] = useState<Config | null>(null);
@@ -126,33 +166,88 @@ function Controller() {
   const [paletteId, setPaletteId] = useState<string | null>(null);
   const [paletteName, setPaletteName] = useState('');
   const [paletteColors, setPaletteColors] = useState('#ADD8E6');
-  useEffect(
-    () => () => {
+  useEffect(() => {
+    mounted.current = true;
+    const request = () => {
+      autoRequested.current = true;
+      automaticConnection.current();
+    };
+    const stopWatching = bluetooth.onPoweredOn(request);
+    const listener = AppState.addEventListener('change', next => {
+      if (next === 'background') {
+        foreground.current = false;
+        connectionAttempt.current?.abort();
+      } else if (next === 'active' && !foreground.current) {
+        foreground.current = true;
+        paused.current = false;
+        request();
+      }
+    });
+    request();
+    return () => {
+      mounted.current = false;
+      connectionAttempt.current?.abort();
+      stopWatching();
+      listener.remove();
       client.current?.close();
       bluetooth
         .destroy()
         .catch(error => console.warn('Bluetooth cleanup failed:', error));
-    },
-    [bluetooth],
-  );
-  async function run(work: () => Promise<unknown>, progressMessage = '') {
+    };
+  }, [bluetooth]);
+  async function run(
+    work: () => Promise<unknown>,
+    progressMessage = '',
+    connection = false,
+  ) {
     if (working.current) {
       return;
     }
     working.current = true;
     setBusy(true);
-    setMessage(progressMessage);
+    const report = connection ? setConnectionMessage : setMessage;
+    report(progressMessage);
+    if (connection) {
+      setConnectionError(false);
+    }
     try {
       await work();
     } catch (error) {
-      setMessage(
-        error instanceof Error
-          ? error.message
-          : 'Operation failed. Reload device state before retrying.',
-      );
+      if (mounted.current) {
+        report(
+          error instanceof Error
+            ? error.message
+            : 'Operation failed. Reload device state before retrying.',
+        );
+        if (connection) {
+          setConnectionError(true);
+        }
+      }
     } finally {
       working.current = false;
-      setBusy(false);
+      if (mounted.current) {
+        setBusy(false);
+        if (autoRequested.current) {
+          automaticConnection.current();
+        }
+      }
+    }
+  }
+  async function runConnection(
+    work: (signal: AbortSignal) => Promise<unknown>,
+    progressMessage: string,
+  ) {
+    if (working.current) {
+      return;
+    }
+    const abort = new AbortController();
+    connectionAttempt.current = abort;
+    try {
+      await run(() => work(abort.signal), progressMessage, true);
+    } finally {
+      if (connectionAttempt.current === abort) {
+        connectionAttempt.current = null;
+      }
     }
   }
   function api(): PixiesClient {
@@ -177,45 +272,95 @@ function Controller() {
     return health;
   }
   async function disconnect() {
+    connectedRef.current = false;
     client.current?.close();
     client.current = null;
-    setConnected(null);
-    setState(null);
-    setDraft(null);
-    setDeviceStatus(null);
-    setPassword('');
-    setWebsitePassword('');
-    await bluetooth.close();
-  }
-  async function connect(device: FoundDevice) {
-    selectedDevice.current = device;
-    const link = await bluetooth.connect(device.id, error => {
-      client.current?.close();
-      client.current = null;
+    if (mounted.current) {
       setConnected(null);
       setState(null);
       setDraft(null);
       setDeviceStatus(null);
+      setMessage('');
       setPassword('');
       setWebsitePassword('');
-      if (!updating.current) {
-        setMessage(`${error.message} Reconnect to read what the ESP retained.`);
-      }
-    });
+    }
+    await bluetooth.close();
+  }
+  async function connect(device: FoundDevice, signal?: AbortSignal) {
+    await disconnect();
+    selectedDevice.current = device;
+    const link = await bluetooth.connect(
+      device.id,
+      error => {
+        if (!mounted.current) {
+          return;
+        }
+        const wasConnected = connectedRef.current;
+        client.current?.close();
+        client.current = null;
+        connectedRef.current = false;
+        setConnected(null);
+        setState(null);
+        setDraft(null);
+        setDeviceStatus(null);
+        setPassword('');
+        setWebsitePassword('');
+        if (!updating.current) {
+          setConnectionMessage(error.message);
+          if (wasConnected) {
+            autoRequested.current = true;
+            automaticConnection.current();
+          }
+        }
+      },
+      signal,
+    );
     client.current = new PixiesClient(link);
+    const cancel = () => client.current?.close();
+    signal?.addEventListener('abort', cancel, { once: true });
     try {
+      if (signal?.aborted) {
+        throw new Error('Bluetooth connection attempt canceled.');
+      }
       await load();
+      if (signal?.aborted || !mounted.current) {
+        throw new Error('Bluetooth connection attempt canceled.');
+      }
+      connectedRef.current = true;
       setConnected(device.name);
-      setMessage('Connected over Bluetooth.');
     } catch (error) {
       await disconnect();
       throw error;
+    } finally {
+      signal?.removeEventListener('abort', cancel);
+    }
+    if (!updating.current) {
+      try {
+        await rememberController(device.id);
+      } catch (error) {
+        throw new Error(
+          `Connected, but automatic reconnection could not be saved: ${
+            error instanceof Error ? error.message : 'storage failed'
+          }`,
+        );
+      }
+    }
+    if (mounted.current) {
+      setConnectionMessage(
+        'Connected over Bluetooth. This controller is remembered.',
+      );
     }
   }
-  async function reconnectAfterUpdate(oldBoot: string, version: string, signal: AbortSignal): Promise<Status> {
+  async function reconnectAfterUpdate(
+    oldBoot: string,
+    version: string,
+    signal: AbortSignal,
+  ): Promise<Status> {
     const device = selectedDevice.current;
     if (!device) {
-      throw new Error('Original controller identity is unavailable; reconnect manually to verify.');
+      throw new Error(
+        'Original controller identity is unavailable; reconnect manually to verify.',
+      );
     }
     await disconnect();
     const deadline = Date.now() + 90000;
@@ -224,7 +369,7 @@ function Controller() {
       checkCanceled(signal);
       await sleep(1500);
       try {
-        await connect(device);
+        await connect(device, signal);
         const health = await load();
         checkCanceled(signal);
         if (health.bootId !== oldBoot && health.firmware.version === version) {
@@ -232,36 +377,84 @@ function Controller() {
         }
         lastError = `Controller still reports firmware ${health.firmware.version}; update is not verified.`;
       } catch (error) {
-        lastError = error instanceof Error ? error.message : 'Bluetooth reconnection failed.';
+        lastError =
+          error instanceof Error
+            ? error.message
+            : 'Bluetooth reconnection failed.';
       }
       await disconnect();
     }
     throw new Error(`Update is not verified. ${lastError}`);
   }
-  async function scan() {
+  async function scan(automatic: boolean, signal: AbortSignal) {
     setDevices([]);
     setScanning(true);
     try {
-      await bluetooth.scan(
-        found =>
-          setDevices(current => [
-            ...current.filter(d => d.id !== found.id),
-            found,
-          ]),
-        error => {
-          setScanning(false);
-          setMessage(error.message);
-        },
-        () => {
-          setScanning(false);
-          setMessage('Scan finished. Select a controller, or scan again.');
-        },
-      );
-    } catch (error) {
-      setScanning(false);
-      throw error;
+      const found = await new Promise<FoundDevice[]>((resolve, reject) => {
+        const devicesById = new Map<string, FoundDevice>();
+        bluetooth
+          .scan(
+            device => {
+              if (mounted.current && !signal.aborted) {
+                devicesById.set(device.id, device);
+                setDevices([...devicesById.values()]);
+              }
+            },
+            reject,
+            () => resolve([...devicesById.values()]),
+            signal,
+          )
+          .catch(reject);
+      });
+      if (signal.aborted) {
+        throw new Error('Bluetooth connection attempt canceled.');
+      }
+      if (automatic) {
+        autoRequested.current = false;
+      }
+      if (automatic && found.length === 1) {
+        setConnectionMessage('Connecting to pixies...');
+        await connect(found[0], signal);
+      } else {
+        setConnectionMessage(
+          found.length
+            ? 'Choose your controller below. Multiple controllers are never selected automatically.'
+            : 'No controllers found. Power your pixies, then scan again.',
+        );
+      }
+    } finally {
+      if (mounted.current) {
+        setScanning(false);
+      }
     }
   }
+  automaticConnection.current = async () => {
+    if (connectedRef.current) {
+      autoRequested.current = false;
+      return;
+    }
+    if (
+      !mounted.current ||
+      !foreground.current ||
+      paused.current ||
+      working.current ||
+      updating.current
+    ) {
+      return;
+    }
+    autoRequested.current = false;
+    await runConnection(async signal => {
+      const id = await rememberedController();
+      if (signal.aborted) {
+        throw new Error('Bluetooth connection attempt canceled.');
+      }
+      if (id) {
+        await connect({ id, name: 'pixies', rssi: null }, signal);
+      } else {
+        await scan(true, signal);
+      }
+    }, 'Connecting automatically...');
+  };
   function candidate(): Config {
     if (!draft || !/^\d{1,4}$/.test(count)) {
       throw new Error('Enter a whole LED count from 1 to 1000.');
@@ -416,43 +609,125 @@ function Controller() {
         contentContainerStyle={styles.content}
       >
         <Text style={styles.heading}>Pixies</Text>
-        <Text style={styles.subtitle}>
-          {connected || 'Bluetooth lights, without hotspot setup'}
-        </Text>
+        <Text style={styles.subtitle}>{connected || 'Your pixie lights'}</Text>
+        <View accessibilityRole="tablist" style={styles.row}>
+          {(
+            ['Lights', 'Connection', 'Updates', 'Wi-Fi', 'Device'] as const
+          ).map(name => (
+            <Button
+              key={name}
+              role="tab"
+              label={name}
+              selected={tab === name}
+              attention={
+                name === 'Connection'
+                  ? !connected || connectionError
+                  : name === 'Updates'
+                  ? updateAttention
+                  : undefined
+              }
+              onPress={() => setTab(name)}
+            />
+          ))}
+        </View>
         <Text
           testID="operation-status"
           accessibilityRole={message ? 'alert' : undefined}
           accessibilityLiveRegion="polite"
           style={[
             styles.notice,
-            { minHeight: 2 * styles.notice.padding + 3 * styles.notice.lineHeight * fontScale },
+            {
+              minHeight:
+                2 * styles.notice.padding +
+                3 * styles.notice.lineHeight * fontScale,
+            },
+            (tab === 'Connection' || tab === 'Updates') && styles.hidden,
           ]}
         >
           {message ||
-            (busy
-              ? 'Working...'
+            (updating.current
+              ? 'Updating. See Updates.'
               : connected
               ? 'Ready.'
-              : 'Select a controller to get started.')}
+              : 'Lighting settings load after connection.')}
         </Text>
-        <UpdatePanel health={deviceStatus} disabled={busy}
-          client={api} reconnect={reconnectAfterUpdate}
+        <UpdatePanel
+          health={deviceStatus}
+          disabled={busy}
+          visible={tab === 'Updates'}
+          onAttention={setUpdateAttention}
+          client={api}
+          reconnect={reconnectAfterUpdate}
           onBusy={value => {
             updating.current = value;
             working.current = value;
             setBusy(value);
-          }} />
-        {!connected ? (
-          <Card title="Connect">
+            if (!value && autoRequested.current) {
+              automaticConnection.current();
+            }
+          }}
+        />
+        {tab === 'Connection' && (
+          <Card title="Connection">
             <Text style={styles.text}>
-              Power the ESP, enable Bluetooth, and select your Pixies. Accept
-              the phone's pairing prompt if shown. No app password is needed.
+              The last controller reconnects automatically. On first use, a
+              single nearby pixies is selected after scanning finishes. Accept
+              the phone's Bluetooth permission or pairing prompt if shown.
             </Text>
+            <Text
+              testID="connection-status"
+              accessibilityRole={connectionError ? 'alert' : undefined}
+              style={styles.text}
+            >
+              {connectionMessage}
+            </Text>
+            {connected && (
+              <Button
+                label="Disconnect"
+                disabled={busy}
+                onPress={() => {
+                  paused.current = true;
+                  autoRequested.current = false;
+                  run(
+                    disconnect,
+                    'Disconnected. Automatic connection resumes next time you open the app.',
+                    true,
+                  );
+                }}
+              />
+            )}
             <Button
               label={scanning ? 'Scan again' : 'Scan controllers'}
               disabled={busy}
-              onPress={() => run(scan)}
+              onPress={() => {
+                paused.current = false;
+                runConnection(
+                  signal => scan(false, signal),
+                  'Scanning for controllers...',
+                );
+              }}
             />
+            {!connected && (
+              <Button
+                label="Reconnect automatically"
+                disabled={busy}
+                onPress={() => {
+                  paused.current = false;
+                  autoRequested.current = true;
+                  automaticConnection.current();
+                }}
+              />
+            )}
+            {busy && connectionAttempt.current && (
+              <Button
+                label="Cancel connection"
+                onPress={() => {
+                  paused.current = true;
+                  autoRequested.current = false;
+                  connectionAttempt.current?.abort();
+                }}
+              />
+            )}
             {devices.map(device => (
               <Button
                 key={device.id}
@@ -460,7 +735,13 @@ function Controller() {
                   device.rssi !== null ? ` (${device.rssi} dBm)` : ''
                 }`}
                 disabled={busy}
-                onPress={() => run(() => connect(device))}
+                onPress={() => {
+                  paused.current = false;
+                  runConnection(
+                    signal => connect(device, signal),
+                    'Connecting to pixies...',
+                  );
+                }}
               />
             ))}
             {!devices.length && (
@@ -471,79 +752,78 @@ function Controller() {
               </Text>
             )}
           </Card>
-        ) : (
-          <>
-            <View style={styles.row}>
-              {(['Lights', 'Wi-Fi', 'Device'] as const).map(name => (
-                <Button
-                  key={name}
-                  label={name}
-                  selected={tab === name}
-                  onPress={() => setTab(name)}
-                />
-              ))}
-            </View>
-            {tab === 'Lights' && draft && state && (
-              <>
-                <Card title="Lighting">
-                  <View style={styles.row}>
-                    <Text style={styles.text}>Lights on</Text>
-                    <Switch
-                      accessibilityLabel="Lights on"
+        )}
+        {tab === 'Lights' && (!draft || !state) && (
+          <Card title="Lighting">
+            <Text style={styles.text}>
+              Your lighting settings will appear here when pixies connects.
+              Connection and update checks run automatically without leaving
+              this screen. Use their tabs if an orange exclamation mark needs
+              attention.
+            </Text>
+          </Card>
+        )}
+        <>
+          {tab === 'Lights' && draft && state && (
+            <>
+              <Card title="Lighting">
+                <View style={styles.row}>
+                  <Text style={styles.text}>Lights on</Text>
+                  <Switch
+                    accessibilityLabel="Lights on"
+                    disabled={blocked}
+                    value={draft.on}
+                    onValueChange={on =>
+                      setDraft({
+                        ...draft,
+                        on,
+                      })
+                    }
+                  />
+                </View>
+                <Text style={styles.text}>
+                  {hasEdits
+                    ? 'Draft changes not applied'
+                    : state.dirty
+                    ? 'Device preview is not saved'
+                    : 'Device settings loaded'}
+                </Text>
+                <Text style={styles.label}>Theme</Text>
+                <View style={styles.row}>
+                  {[...PRESETS, ...draft.customPalettes].map(p => (
+                    <Button
+                      key={p.id}
+                      label={p.name}
+                      selected={p.id === draft.paletteId}
                       disabled={blocked}
-                      value={draft.on}
-                      onValueChange={on =>
+                      onPress={() =>
                         setDraft({
                           ...draft,
-                          on,
+                          paletteId: p.id,
                         })
                       }
                     />
-                  </View>
-                  <Text style={styles.text}>
-                    {hasEdits
-                      ? 'Draft changes not applied'
-                      : state.dirty
-                      ? 'Device preview is not saved'
-                      : 'Device settings loaded'}
-                  </Text>
-                  <Text style={styles.label}>Theme</Text>
-                  <View style={styles.row}>
-                    {[...PRESETS, ...draft.customPalettes].map(p => (
-                      <Button
-                        key={p.id}
-                        label={p.name}
-                        selected={p.id === draft.paletteId}
-                        disabled={blocked}
-                        onPress={() =>
-                          setDraft({
-                            ...draft,
-                            paletteId: p.id,
-                          })
-                        }
-                      />
-                    ))}
-                  </View>
-                  <Text style={styles.label}>Effect</Text>
-                  <View style={styles.row}>
-                    {EFFECTS.map(effect => (
-                      <Button
-                        key={effect}
-                        label={effect}
-                        selected={effect === draft.effect}
-                        disabled={blocked}
-                        onPress={() =>
-                          setDraft({
-                            ...draft,
-                            effect,
-                          })
-                        }
-                      />
-                    ))}
-                  </View>
-                  {(
-                    ['brightness', 'speed', 'intensity', 'density'] as const
-                  ).map(key => (
+                  ))}
+                </View>
+                <Text style={styles.label}>Effect</Text>
+                <View style={styles.row}>
+                  {EFFECTS.map(effect => (
+                    <Button
+                      key={effect}
+                      label={effect}
+                      selected={effect === draft.effect}
+                      disabled={blocked}
+                      onPress={() =>
+                        setDraft({
+                          ...draft,
+                          effect,
+                        })
+                      }
+                    />
+                  ))}
+                </View>
+                {(['brightness', 'speed', 'intensity', 'density'] as const).map(
+                  key => (
                     <View key={key}>
                       <Text style={styles.label}>
                         {key}: {draft[key]}%
@@ -572,315 +852,317 @@ function Controller() {
                         }
                       />
                     </View>
-                  ))}
-                  <Text style={styles.label}>LED count (1-1000)</Text>
-                  <Input
-                    accessibilityLabel="LED count"
-                    editable={!blocked}
-                    keyboardType="number-pad"
-                    value={count}
-                    onChangeText={setCount}
-                    maxLength={4}
-                  />
-                  <Text style={styles.text}>
-                    Active: {state.activeLedCount}. Only LED-count changes need
-                    Save, then Restart. Other lighting settings do not need a
-                    restart.
-                  </Text>
-                  <View style={styles.row}>
-                    <Button
-                      label="Preview"
-                      disabled={blocked}
-                      onPress={() => run(() => preview(false))}
-                    />
-                    <Button
-                      label="Save"
-                      disabled={blocked}
-                      onPress={() => run(() => preview(true), 'Saving...')}
-                    />
-                    <Button
-                      label="Reload"
-                      disabled={blocked}
-                      onPress={() =>
-                        Alert.alert(
-                          'Reload from ESP?',
-                          'Local draft edits will be replaced.',
-                          [
-                            {
-                              text: 'Cancel',
-                              style: 'cancel',
-                            },
-                            {
-                              text: 'Reload',
-                              onPress: () => run(load),
-                            },
-                          ],
-                        )
-                      }
-                    />
-                  </View>
-                </Card>
-                <Card title="Custom palettes">
-                  {draft.customPalettes.map(p => (
-                    <View key={p.id} style={styles.row}>
-                      <Button
-                        label={`Edit ${p.name}`}
-                        disabled={blocked}
-                        onPress={() => editPalette(p)}
-                      />
-                      <Button
-                        label={`Delete ${p.name}`}
-                        disabled={blocked}
-                        onPress={() =>
-                          setDraft({
-                            ...draft,
-                            paletteId:
-                              draft.paletteId === p.id
-                                ? 'halloween'
-                                : draft.paletteId,
-                            customPalettes: draft.customPalettes.filter(
-                              item => item.id !== p.id,
-                            ),
-                          })
-                        }
-                      />
-                    </View>
-                  ))}
-                  <Text style={styles.text}>
-                    {draft.customPalettes.length}/10 palettes. Changes remain a
-                    draft until Preview or Save.
-                  </Text>
-                  <Input
-                    accessibilityLabel="Palette name"
-                    placeholder="Palette name"
-                    editable={!blocked}
-                    maxLength={32}
-                    value={paletteName}
-                    onChangeText={setPaletteName}
-                  />
-                  <Input
-                    accessibilityLabel="Palette colors"
-                    placeholder="#ADD8E6, #FFFFFF"
-                    editable={!blocked}
-                    value={paletteColors}
-                    onChangeText={setPaletteColors}
-                  />
-                  <Text style={styles.text}>
-                    Enter 1-8 six-digit RGB colors, separated by commas.
-                  </Text>
-                  <Button
-                    label={
-                      paletteId ? 'Update palette draft' : 'Add palette draft'
-                    }
-                    disabled={blocked}
-                    onPress={keepPalette}
-                  />
-                </Card>
-              </>
-            )}
-            {tab === 'Wi-Fi' && (
-              <Card title="Optional Wi-Fi">
-                <Text style={styles.text}>
-                  Lighting and Bluetooth work without Wi-Fi. Joining your local
-                  2.4 GHz network enables the website; it does not expose the
-                  ESP to the Internet.
-                </Text>
-                <Button
-                  label="Scan Wi-Fi networks"
-                  disabled={blocked}
-                  onPress={() => run(scanWifi)}
-                />
-                {networks.map((n, i) => (
-                  <Button
-                    key={`${n.ssid}-${i}`}
-                    label={`${n.ssid || '(hidden)'} (${n.rssi} dBm)${
-                      n.open ? ' - open' : ''
-                    }`}
-                    disabled={blocked || !n.ssid}
-                    onPress={() => {
-                      setSsid(n.ssid);
-                      setPassword('');
-                    }}
-                  />
-                ))}
-                <Input
-                  accessibilityLabel="Wi-Fi network"
-                  placeholder="Network name"
-                  editable={!blocked}
-                  value={ssid}
-                  onChangeText={setSsid}
-                />
-                <Input
-                  accessibilityLabel="Wi-Fi password"
-                  placeholder="Wi-Fi password"
-                  editable={!blocked}
-                  secureTextEntry
-                  textContentType="password"
-                  value={password}
-                  onChangeText={setPassword}
-                />
-                <Text style={styles.text}>
-                  Passwords are sent over encrypted Bluetooth and saved only on
-                  the ESP after a successful connection.
-                </Text>
-                <Button
-                  label="Connect and save Wi-Fi"
-                  disabled={blocked}
-                  onPress={() => run(joinWifi)}
-                />
-                <Button
-                  label="Refresh network status"
-                  disabled={blocked}
-                  onPress={() =>
-                    run(async () => {
-                      setDeviceStatus(status(await api().command('status')));
-                    })
-                  }
-                />
-                {deviceStatus && (
-                  <Text style={styles.text}>
-                    {deviceStatus.network.state}
-                    {'\n'}
-                    {deviceStatus.network.ip}
-                    {'\n'}
-                    {deviceStatus.network.hostname}
-                  </Text>
+                  ),
                 )}
-                {!!deviceStatus?.network.ip && (
+                <Text style={styles.label}>LED count (1-1000)</Text>
+                <Input
+                  accessibilityLabel="LED count"
+                  editable={!blocked}
+                  keyboardType="number-pad"
+                  value={count}
+                  onChangeText={setCount}
+                  maxLength={4}
+                />
+                <Text style={styles.text}>
+                  Active: {state.activeLedCount}. Only LED-count changes need
+                  Save, then Restart. Other lighting settings do not need a
+                  restart.
+                </Text>
+                <View style={styles.row}>
                   <Button
-                    label="Open local website"
+                    label="Preview"
+                    disabled={blocked}
+                    onPress={() => run(() => preview(false))}
+                  />
+                  <Button
+                    label="Save"
+                    disabled={blocked}
+                    onPress={() => run(() => preview(true), 'Saving...')}
+                  />
+                  <Button
+                    label="Reload"
                     disabled={blocked}
                     onPress={() =>
-                      run(async () => {
-                        await Linking.openURL(
-                          `http://${deviceStatus.network.ip}`,
-                        );
-                      })
+                      Alert.alert(
+                        'Reload from ESP?',
+                        'Local draft edits will be replaced.',
+                        [
+                          {
+                            text: 'Cancel',
+                            style: 'cancel',
+                          },
+                          {
+                            text: 'Reload',
+                            onPress: () => run(load),
+                          },
+                        ],
+                      )
                     }
                   />
-                )}
+                </View>
               </Card>
-            )}
-            {tab === 'Device' && (
-              <Card title="Device">
-                {deviceStatus && (
-                  <Text style={styles.text}>
-                    Firmware {deviceStatus.firmware.version}
-                    {'\n'}
-                    LEDs: {deviceStatus.led.ready ? 'ready' : 'unavailable'} on
-                    GPIO{deviceStatus.led.gpio}
-                    {'\n'}
-                    Frames: {deviceStatus.led.frames}
-                    {'\n'}
-                    Estimated current: {deviceStatus.led.estimatedMa} mA
-                    {deviceStatus.led.limited ? ' (limited)' : ''}
-                  </Text>
-                )}
-                <Button
-                  label="Refresh device status"
-                  disabled={blocked}
-                  onPress={() =>
-                    run(async () =>
-                      setDeviceStatus(status(await api().command('status'))),
-                    )
-                  }
-                />
-                <Button
-                  label="Restart ESP"
-                  disabled={blocked}
-                  onPress={() =>
-                    Alert.alert(
-                      'Restart ESP?',
-                      'Only saved settings return after restart.',
-                      [
-                        {
-                          text: 'Cancel',
-                          style: 'cancel',
-                        },
-                        {
-                          text: 'Restart',
-                          onPress: () =>
-                            run(async () => {
-                              const result = await api().command('restart', {
-                                confirm: 'restart',
-                              });
-                              if (
-                                !record(result) ||
-                                result.restarting !== true
-                              ) {
-                                throw new Error(
-                                  'Restart was not acknowledged.',
-                                );
-                              }
-                              await disconnect();
-                              setMessage(
-                                'Restart requested. Reconnect to load saved settings.',
-                              );
-                            }),
-                        },
-                      ],
-                    )
-                  }
-                />
-                {deviceStatus && !deviceStatus.admin.configured && (
-                  <>
-                    <Text style={styles.label}>
-                      Optional website administration
-                    </Text>
-                    <Text style={styles.text}>
-                      Not needed for this app. Set a website password only if
-                      you want browser firmware uploads or web administration.
-                    </Text>
-                    <Input
-                      accessibilityLabel="Website administration password"
-                      placeholder="12-64 byte website password"
-                      secureTextEntry
-                      editable={!blocked}
-                      value={websitePassword}
-                      onChangeText={setWebsitePassword}
+              <Card title="Custom palettes">
+                {draft.customPalettes.map(p => (
+                  <View key={p.id} style={styles.row}>
+                    <Button
+                      label={`Edit ${p.name}`}
+                      disabled={blocked}
+                      onPress={() => editPalette(p)}
                     />
                     <Button
-                      label="Set optional website password"
+                      label={`Delete ${p.name}`}
                       disabled={blocked}
                       onPress={() =>
-                        run(async () => {
-                          try {
-                            const result = await api().command('admin.claim', {
-                              password: websitePassword,
-                            });
-                            if (!record(result) || result.configured !== true) {
-                              throw new Error(
-                                'Website administration was not confirmed.',
-                              );
-                            }
-                            setDeviceStatus(
-                              status(await api().command('status')),
-                            );
-                            setMessage(
-                              'Website password saved. The Bluetooth app still needs no login.',
-                            );
-                          } finally {
-                            setWebsitePassword('');
-                          }
+                        setDraft({
+                          ...draft,
+                          paletteId:
+                            draft.paletteId === p.id
+                              ? 'halloween'
+                              : draft.paletteId,
+                          customPalettes: draft.customPalettes.filter(
+                            item => item.id !== p.id,
+                          ),
                         })
                       }
                     />
-                  </>
-                )}
+                  </View>
+                ))}
+                <Text style={styles.text}>
+                  {draft.customPalettes.length}/10 palettes. Changes remain a
+                  draft until Preview or Save.
+                </Text>
+                <Input
+                  accessibilityLabel="Palette name"
+                  placeholder="Palette name"
+                  editable={!blocked}
+                  maxLength={32}
+                  value={paletteName}
+                  onChangeText={setPaletteName}
+                />
+                <Input
+                  accessibilityLabel="Palette colors"
+                  placeholder="#ADD8E6, #FFFFFF"
+                  editable={!blocked}
+                  value={paletteColors}
+                  onChangeText={setPaletteColors}
+                />
+                <Text style={styles.text}>
+                  Enter 1-8 six-digit RGB colors, separated by commas.
+                </Text>
                 <Button
-                  label="Disconnect"
-                  disabled={busy}
-                  onPress={() => run(disconnect)}
+                  label={
+                    paletteId ? 'Update palette draft' : 'Add palette draft'
+                  }
+                  disabled={blocked}
+                  onPress={keepPalette}
                 />
               </Card>
-            )}
-          </>
-        )}
+            </>
+          )}
+          {tab === 'Wi-Fi' && (
+            <Card title="Optional Wi-Fi">
+              <Text style={styles.text}>
+                Lighting and Bluetooth work without Wi-Fi. Joining your local
+                2.4 GHz network enables the website; it does not expose the ESP
+                to the Internet.
+              </Text>
+              <Button
+                label="Scan Wi-Fi networks"
+                disabled={blocked}
+                onPress={() => run(scanWifi)}
+              />
+              {networks.map((n, i) => (
+                <Button
+                  key={`${n.ssid}-${i}`}
+                  label={`${n.ssid || '(hidden)'} (${n.rssi} dBm)${
+                    n.open ? ' - open' : ''
+                  }`}
+                  disabled={blocked || !n.ssid}
+                  onPress={() => {
+                    setSsid(n.ssid);
+                    setPassword('');
+                  }}
+                />
+              ))}
+              <Input
+                accessibilityLabel="Wi-Fi network"
+                placeholder="Network name"
+                editable={!blocked}
+                value={ssid}
+                onChangeText={setSsid}
+              />
+              <Input
+                accessibilityLabel="Wi-Fi password"
+                placeholder="Wi-Fi password"
+                editable={!blocked}
+                secureTextEntry
+                textContentType="password"
+                value={password}
+                onChangeText={setPassword}
+              />
+              <Text style={styles.text}>
+                Passwords are sent over encrypted Bluetooth and saved only on
+                the ESP after a successful connection.
+              </Text>
+              <Button
+                label="Connect and save Wi-Fi"
+                disabled={blocked}
+                onPress={() => run(joinWifi)}
+              />
+              <Button
+                label="Refresh network status"
+                disabled={blocked}
+                onPress={() =>
+                  run(async () => {
+                    setDeviceStatus(status(await api().command('status')));
+                  })
+                }
+              />
+              {deviceStatus && (
+                <Text style={styles.text}>
+                  {deviceStatus.network.state}
+                  {'\n'}
+                  {deviceStatus.network.ip}
+                  {'\n'}
+                  {deviceStatus.network.hostname}
+                </Text>
+              )}
+              {!!deviceStatus?.network.ip && (
+                <Button
+                  label="Open local website"
+                  disabled={blocked}
+                  onPress={() =>
+                    run(async () => {
+                      await Linking.openURL(
+                        `http://${deviceStatus.network.ip}`,
+                      );
+                    })
+                  }
+                />
+              )}
+            </Card>
+          )}
+          {tab === 'Device' && (
+            <Card title="Device">
+              {deviceStatus && (
+                <Text style={styles.text}>
+                  Firmware {deviceStatus.firmware.version}
+                  {'\n'}
+                  LEDs: {deviceStatus.led.ready ? 'ready' : 'unavailable'} on
+                  GPIO{deviceStatus.led.gpio}
+                  {'\n'}
+                  Frames: {deviceStatus.led.frames}
+                  {'\n'}
+                  Estimated current: {deviceStatus.led.estimatedMa} mA
+                  {deviceStatus.led.limited ? ' (limited)' : ''}
+                </Text>
+              )}
+              <Button
+                label="Refresh device status"
+                disabled={blocked}
+                onPress={() =>
+                  run(async () =>
+                    setDeviceStatus(status(await api().command('status'))),
+                  )
+                }
+              />
+              <Button
+                label="Restart ESP"
+                disabled={blocked}
+                onPress={() =>
+                  Alert.alert(
+                    'Restart ESP?',
+                    'Only saved settings return after restart.',
+                    [
+                      {
+                        text: 'Cancel',
+                        style: 'cancel',
+                      },
+                      {
+                        text: 'Restart',
+                        onPress: () =>
+                          run(async () => {
+                            const result = await api().command('restart', {
+                              confirm: 'restart',
+                            });
+                            if (!record(result) || result.restarting !== true) {
+                              throw new Error('Restart was not acknowledged.');
+                            }
+                            await disconnect();
+                            setMessage(
+                              'Restart requested. Reconnect to load saved settings.',
+                            );
+                          }),
+                      },
+                    ],
+                  )
+                }
+              />
+              {deviceStatus && !deviceStatus.admin.configured && (
+                <>
+                  <Text style={styles.label}>
+                    Optional website administration
+                  </Text>
+                  <Text style={styles.text}>
+                    Not needed for this app. Set a website password only if you
+                    want browser firmware uploads or web administration.
+                  </Text>
+                  <Input
+                    accessibilityLabel="Website administration password"
+                    placeholder="12-64 byte website password"
+                    secureTextEntry
+                    editable={!blocked}
+                    value={websitePassword}
+                    onChangeText={setWebsitePassword}
+                  />
+                  <Button
+                    label="Set optional website password"
+                    disabled={blocked}
+                    onPress={() =>
+                      run(async () => {
+                        try {
+                          const result = await api().command('admin.claim', {
+                            password: websitePassword,
+                          });
+                          if (!record(result) || result.configured !== true) {
+                            throw new Error(
+                              'Website administration was not confirmed.',
+                            );
+                          }
+                          setDeviceStatus(
+                            status(await api().command('status')),
+                          );
+                          setMessage(
+                            'Website password saved. The Bluetooth app still needs no login.',
+                          );
+                        } finally {
+                          setWebsitePassword('');
+                        }
+                      })
+                    }
+                  />
+                </>
+              )}
+            </Card>
+          )}
+        </>
       </ScrollView>
     </SafeAreaView>
   );
 }
 const styles = StyleSheet.create({
+  hidden: { display: 'none' },
+  invisible: { opacity: 0 },
+  buttonContent: { flexDirection: 'row', gap: 8, alignItems: 'center' },
+  badge: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    backgroundColor: '#fb923c',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  badgeText: { color: '#0b1220', fontSize: 15, fontWeight: '800' },
   safe: {
     flex: 1,
     backgroundColor: '#0b1220',

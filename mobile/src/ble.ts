@@ -14,12 +14,17 @@ export class Bluetooth {
   private device: Device | null = null;
   private disconnect: Subscription | null = null;
   private scanTimer: ReturnType<typeof setTimeout> | null = null;
-  async scan(
-    found: (device: FoundDevice) => void,
-    failed: (error: Error) => void,
-    ended: () => void,
-  ): Promise<void> {
-    await this.stopScan();
+  private scanCleanup: (() => void) | null = null;
+  private connectingId: string | null = null;
+  private closing: Promise<void> | null = null;
+  private generation = 0;
+  private checkCanceled(signal?: AbortSignal) {
+    if (signal?.aborted) {
+      throw new Error('Bluetooth connection attempt canceled.');
+    }
+  }
+  private async ready(signal?: AbortSignal): Promise<void> {
+    this.checkCanceled(signal);
     if (Platform.OS === 'android') {
       const permissions =
         Number(Platform.Version) >= 31
@@ -39,7 +44,9 @@ export class Bluetooth {
         );
       }
     }
+    this.checkCanceled(signal);
     const state = await this.manager.state();
+    this.checkCanceled(signal);
     if (state !== State.PoweredOn) {
       throw new Error(
         state === State.Unauthorized
@@ -47,11 +54,43 @@ export class Bluetooth {
           : 'Turn on Bluetooth and scan again.',
       );
     }
+  }
+  onPoweredOn(ready: () => void): () => void {
+    const subscription = this.manager.onStateChange(state => {
+      if (state === State.PoweredOn) {
+        ready();
+      }
+    }, false);
+    return () => subscription.remove();
+  }
+  async scan(
+    found: (device: FoundDevice) => void,
+    failed: (error: Error) => void,
+    ended: () => void,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    await this.stopScan();
+    await this.ready(signal);
+    let active = true;
+    const cancel = () => {
+      this.stopScan().then(
+        () => failed(new Error('Bluetooth connection attempt canceled.')),
+        failed,
+      );
+    };
+    signal?.addEventListener('abort', cancel, { once: true });
+    this.scanCleanup = () => {
+      active = false;
+      signal?.removeEventListener('abort', cancel);
+    };
     this.scanTimer = setTimeout(() => {
       this.stopScan().then(ended, failed);
     }, 10000);
     try {
       await this.manager.startDeviceScan([SERVICE], null, (error, device) => {
+        if (!active) {
+          return;
+        }
         if (error) {
           this.stopScan().then(() => failed(new Error(error.message)), failed);
         } else if (device) {
@@ -68,6 +107,8 @@ export class Bluetooth {
     }
   }
   async stopScan(): Promise<void> {
+    this.scanCleanup?.();
+    this.scanCleanup = null;
     if (this.scanTimer) {
       clearTimeout(this.scanTimer);
       this.scanTimer = null;
@@ -77,17 +118,46 @@ export class Bluetooth {
   async connect(
     id: string,
     disconnected: (error: Error) => void,
+    signal?: AbortSignal,
   ): Promise<Link> {
+    if (this.closing) {
+      await this.closing;
+    }
     await this.stopScan();
-    const connected = await this.manager.connectToDevice(id, {
-      requestMTU: 247,
-      timeout: 30000,
-    });
-    this.device = connected;
+    const generation = ++this.generation;
+    await this.ready(signal);
+    const current = () => {
+      this.checkCanceled(signal);
+      if (generation !== this.generation) {
+        throw new Error('Bluetooth connection attempt was superseded.');
+      }
+    };
+    current();
+    this.connectingId = id;
+    let cancellation: Promise<void> | null = null;
+    const cancel = () => {
+      if (generation === this.generation) {
+        cancellation = this.close();
+        cancellation.catch(error =>
+          console.warn('Bluetooth connection cancellation failed:', error),
+        );
+      }
+    };
+    signal?.addEventListener('abort', cancel, { once: true });
     try {
+      const connected = await this.manager.connectToDevice(id, {
+        requestMTU: 247,
+        timeout: 30000,
+      });
+      current();
+      this.device = connected;
       const device = await connected.discoverAllServicesAndCharacteristics();
+      current();
       this.device = device;
       this.disconnect = this.manager.onDeviceDisconnected(id, error => {
+        if (generation !== this.generation) {
+          return;
+        }
         this.device = null;
         this.disconnect?.remove();
         this.disconnect = null;
@@ -124,18 +194,37 @@ export class Bluetooth {
         },
       };
     } catch (error) {
-      await this.close();
+      if (cancellation) {
+        await cancellation;
+      } else if (generation === this.generation) {
+        await this.close();
+      }
       throw error;
+    } finally {
+      signal?.removeEventListener('abort', cancel);
+      if (generation === this.generation) {
+        this.connectingId = null;
+      }
     }
   }
-  async close(): Promise<void> {
+  close(): Promise<void> {
+    if (!this.closing) {
+      this.closing = this.closeCurrent().finally(() => {
+        this.closing = null;
+      });
+    }
+    return this.closing;
+  }
+  private async closeCurrent(): Promise<void> {
+    ++this.generation;
     await this.stopScan();
     this.disconnect?.remove();
     this.disconnect = null;
-    const device = this.device;
+    const id = this.device?.id ?? this.connectingId;
     this.device = null;
-    if (device) {
-      await this.manager.cancelDeviceConnection(device.id);
+    this.connectingId = null;
+    if (id) {
+      await this.manager.cancelDeviceConnection(id);
     }
   }
   async destroy(): Promise<void> {
