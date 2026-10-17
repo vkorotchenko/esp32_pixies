@@ -79,6 +79,20 @@ async function connectController() {
   await act(async () => { await rendered.root.findByProps({ label: 'pixies' }).props.onPress(); });
   expect(mockConnect).toHaveBeenCalledWith('original-id', expect.any(Function));
 }
+test('Preview explains Save without implying a reboot or claiming unchanged saved settings are unsaved', async () => {
+  const current = configuration();
+  const command = jest.spyOn(PixiesClient.prototype, 'command').mockImplementation(async op => {
+    if (op === 'status') { return { ...healthFixture(), bootId: current.bootId }; }
+    if (op === 'config') { return current; }
+    if (op === 'config.set') { return { ...current, revision: 2 }; }
+    throw new Error(`Unexpected operation: ${op}`);
+  });
+  await connectController();
+  await act(async () => { rendered.root.findByProps({ label: 'Preview' }).props.onPress(); });
+  expect(rendered.root.findByProps({ testID: 'operation-status' }).props.children)
+    .toBe('Preview active. Tap Save to keep it.');
+  expect(command.mock.calls.map(([op]) => op)).toEqual(['config', 'status', 'config.set']);
+});
 test.each([[false, false], [true, false], [false, true]])('Save feedback stays in place (count changed: %s, save fails: %s)', async (countChanged, failSave) => {
   let current = configuration();
   let finishSave: (value: unknown) => void = () => {};

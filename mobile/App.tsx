@@ -301,7 +301,7 @@ function Controller() {
           : 'Saved. No restart needed.',
       );
     } else {
-      setMessage('Preview active. Not saved yet.');
+      setMessage('Preview active. Tap Save to keep it.');
     }
   }
   async function scanWifi() {
