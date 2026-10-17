@@ -1,4 +1,7 @@
 #pragma once
+#ifdef PIXIES_CONTROL_TEST
+class WebServer;
+#else
 // Narrow transport fake: compile the REAL bounded receiver. Responses include
 // actual HTTP framing, including the core-2 explicit-length/sentinel behavior.
 #include "ArduinoString.h"
@@ -173,4 +176,5 @@ inline void WebServer::send(int code,const char* type,const String& data) {
 inline void WebServer::send_P(int code,const char* type,const char* data,size_t size) {
   String header; _prepareHeader(header,code,type,size); sendContent(header); sendContent_P(data,size);
 }
+#endif
 #endif

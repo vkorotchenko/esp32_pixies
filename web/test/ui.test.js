@@ -26,7 +26,7 @@ test("all integer boundaries and strict complete-object validation match firmwar
   for (const value of [null, false, [], undefined]) assert.ok(Object.keys(validateConfig(value)).length);
 });
 test("themes and all five effects remain independent", () => {
-  for (const effect of EFFECTS) for (const paletteId of ["halloween", "christmas", "porch"]) {
+  for (const effect of EFFECTS) for (const paletteId of ["builtin:light-blue", "halloween", "christmas", "porch"]) {
     assert.deepEqual(validateConfig(configFixture({ effect, paletteId, customPalettes: [custom()] })), {});
   }
   assert.deepEqual(effectUsage("steady"), { speed: false, intensity: false, density: false });
@@ -123,7 +123,7 @@ test("authoritative response guards reject partial sessions/status/config instea
   assert.deepEqual(checkSnapshot(snapshotFixture()), snapshotFixture());
   assert.deepEqual(checkStatus(statusFixture()), statusFixture());
   assert.deepEqual(checkSession(sessionFixture()), sessionFixture());
-  assert.equal(checkPalettes({ palettes: palettesFixture() }).length, 2);
+  assert.equal(checkPalettes({ palettes: palettesFixture() }).length, 3);
   for (const value of [{}, snapshotFixture(configFixture(), { requestedLedCount: 300 }), snapshotFixture(configFixture(), { savedRestartRequired: true }), snapshotFixture(configFixture(), { dirty: "false" })]) assert.throws(() => checkSnapshot(value));
   assert.throws(() => checkStatus({ schemaVersion: 1 }));
   const incomplete = statusFixture(); delete incomplete.update.slotBytes; assert.throws(() => checkStatus(incomplete));

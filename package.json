@@ -5,5 +5,9 @@
   "scripts": {
     "test": "node --test web/test/*.test.js",
     "test:browser": "node web/test/browser-smoke.js"
+  },
+  "devDependencies": {
+    "@resvg/resvg-js": "2.6.2",
+    "pngjs": "7.0.0"
   }
 }

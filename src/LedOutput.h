@@ -7,9 +7,14 @@ using PixiesColorFeature=NeoGrbFeature;
 #else
 using PixiesColorFeature=NeoRgbFeature;
 #endif
-class PixiesBus : public NeoPixelBus<PixiesColorFeature,NeoEsp32Rmt0Ws2812xMethod> {
+#if PIXIES_LED_WS2811
+using PixiesOutputMethod=NeoEsp32Rmt0Ws2811Method;
+#else
+using PixiesOutputMethod=NeoEsp32Rmt0Ws2812xMethod;
+#endif
+class PixiesBus : public NeoPixelBus<PixiesColorFeature,PixiesOutputMethod> {
  public:
-  using NeoPixelBus<PixiesColorFeature,NeoEsp32Rmt0Ws2812xMethod>::NeoPixelBus;
+  using NeoPixelBus<PixiesColorFeature,PixiesOutputMethod>::NeoPixelBus;
   bool buffersInternal();
 };
 class LedOutput {

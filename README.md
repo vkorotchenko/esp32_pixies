@@ -1,18 +1,48 @@
 # ESP32 Pixies
 
-Local, offline-capable controller for one 5V WS2812 serial string. PlatformIO
-Arduino firmware for **ESP32-S3-WROOM-1-N16R8**, a protected setup hotspot,
-palette/effect controls, explicit Save, and authenticated browser application OTA.
+Local, offline-capable controller for one 5V WS2811 serial pixel string. PlatformIO
+Arduino firmware for **ESP32-S3-WROOM-1-N16R8**, a React Native Android/iPhone
+Bluetooth companion, palette/effect controls, explicit Save, optional local Wi-Fi,
+and phone-managed BLE firmware and Android app updates.
 
-**Status:** firmware compiles and native simulations exercise pure logic and
-selected adapters. The embedded UI is intentionally minimal; final frontend and
-independent review follow separately. No physical carrier, wiring, timing,
-network or OTA acceptance is asserted by a software build.
+**Connection:** use the [mobile app](mobile/README.md) over Bluetooth Low Energy.
+No hotspot join, app account, or custom PIN is required. The website remains an
+optional local-network/fallback interface.
+
+The app opens on **Lights** while it reconnects the remembered controller and
+checks for updates. On first use, it auto-connects only if one controller appears
+in the scan. **Connection** and **Updates** have separate tabs with orange **!**
+attention badges; missing Bluetooth or Internet never forces you away from Lights.
+Firmware and Android app installation still require your approval.
+
+**Hardware status:** USB programming and startup were verified on the target
+module. Android BLE connection and lighting-control access are verified. The
+identified string uses WS2811 pixels; the WS2811/RGB output profile still needs
+physical color and full-string acceptance. A successful build is not a wiring,
+signal, radio, or OTA acceptance result.
 
 ## Build and test
 
+Use the root Makefile for builds and releases:
+
+```sh
+make help
+make firmware           # Build only; never uploads to a controller.
+make android-dev        # Explicit development signing.
+make android-release    # Dedicated production signing; no development fallback.
+make dist               # Validate and package firmware, APK, manifest and hashes.
+make test
+```
+
+`version.json` owns the shared product version and increasing Android version
+code. Run `make version-sync` after editing it. Override `PIO`, `PYTHON` or
+`ARCHITECTURES` when needed; Android currently defaults to `arm64-v8a`.
+Run `npm ci` at the root before `make icons`; mobile builds need
+`cd mobile && npm ci`. See [mobile build prerequisites](mobile/README.md).
+
 Requires Python/PlatformIO Core 6.2.0, a native C++17 compiler for tests, and Node
-24. No npm dependencies or production Node server.
+24. Web tests need no npm dependencies or production Node server; the native app
+has its own dependency manifest and build steps in `mobile/`.
 
 ```sh
 pio test -e native
@@ -32,7 +62,7 @@ python3 -m venv .venv
 ```
 
 Pinned inputs: `espressif32@7.1.3` (Arduino core 2.0.17 family),
-`NeoPixelBus@2.8.4`, `ArduinoJson@6.21.5`. The platform's framework/tool package
+`NeoPixelBus@2.8.4`, `ArduinoJson@6.21.5`, `NimBLE-Arduino@2.5.1`. The platform's framework/tool package
 patch build may vary within its compatible range; inspect the build's package
 list when reproducing a binary. CI uses the same build/test commands.
 
@@ -66,7 +96,10 @@ BOOT/RESET switches, module marking, memory detection and safe power path first.
 Build flags in `platformio.ini` / `include/config.h`:
 
 - `PIXIES_LED_PIN=4`: **provisional**, verify before wiring.
-- `PIXIES_COLOR_GRB=1`: GRB default; set 0 for RGB and do a low-brightness RGB test.
+- `PIXIES_LED_WS2811=1`: dedicated WS2811 800kbit/s RMT timing; set 0 for
+  the previous WS2812x timing.
+- `PIXIES_COLOR_GRB=0`: RGB profile; set 1 for GRB. Verify the actual string's
+  channel order with a low-brightness red/green/blue test.
 - `PIXIES_CURRENT_MA=9000`: conservative estimated LED budget, configurable
   downward to 1000mA; not a current sensor or electrical protection.
 - `PIXIES_RECOVERY_PIN=-1`: physical switch disabled until carrier verified.
@@ -87,7 +120,43 @@ as a test pattern. Software estimates cannot detect shorts, undervoltage, bad
 connections or undersized wiring. Measure current/voltage and inspect thermal
 behavior; use suitable real protection.
 
+### LED diagnostics
+
+Send **`ledstatus`** followed by a newline over the local USB console at 115200.
+It returns the same LED diagnostics as HTTP/BLE status, without network or
+administration data: driver readiness, GPIO, compiled protocol/order, active and
+requested counts, rendered frames, live lighting controls, and modeled current.
+Run it twice a few seconds apart to check frame progress without joining Wi-Fi.
+Neither the command nor a firmware update changes saved settings.
+
+Increasing frame counts confirm software submission, not a valid electrical
+waveform or successful pixel reception. WS2811 timing and channel order are
+separate settings; swapped colors alone do not explain an otherwise dark string.
+If only the first pixel responds, verify the data level and first pixel's output
+before treating a driver/profile change as a proven fix. Confirm the purchased
+voltage variant rather than relying on a listing that offers both 5V and 12V.
+
 ## First boot and offline operation
+
+1. With verified hardware, upload the Bluetooth-enabled firmware once over USB.
+   Normal updates preserve NVS; do not erase flash to change lighting.
+2. Install the native app, tap **Scan controllers**, and select your Pixies.
+   Accept the phone's Bluetooth permission/pairing prompt if shown.
+3. Select a theme/effect, adjust the controls, and tap **Preview** or **Save**.
+   Preview is RAM-only; Save restores your choices after restart. A clean device
+   starts light-blue twinkling at 25% brightness.
+4. Wi-Fi is optional. The app asks the ESP to scan 2.4 GHz networks, submits the
+   chosen credentials over encrypted BLE, and reports the verified result/IP.
+   Your phone stays on its normal network. Lighting keeps running without a router.
+5. The app needs no administration password. If browser administration/OTA is
+   wanted, optionally set a website password in the app's Device screen.
+
+The installed app includes its JavaScript bundle; normal operation requires
+neither Metro nor Internet. Local Wi-Fi setup does **not** create remote Internet
+access, a cloud account, or a port-forwarding rule. That is a separate future feature.
+See [BLE commands and framing](docs/BLE.md).
+
+### Optional website/hotspot fallback
 
 1. After confirming hardware, install by the carrier's normal USB procedure
    (`pio run -e esp32s3_n16r8 -t upload`, only with explicit operator approval).
@@ -117,17 +186,21 @@ the old credentials. All web assets work without Internet access.
 
 ## Lighting, Save and power
 
-Defaults: 200 pixels, on, brightness 25%, Halloween green/orange, steady;
+Clean-device defaults: 200 pixels, on, brightness 25%, light blue `#ADD8E6`, twinkle;
 speed/intensity/density 50%. Supported count 1..1000. Halloween and Christmas
-red/white/green are immutable. Up to ten custom named palettes, each 1..8 colors.
+red/white/green and Light blue are immutable. Up to ten custom named palettes, each 1..8 colors.
 Themes and effects are independent. Effects: steady, twinkle, candle, breathe,
 chase; see [the exact API](docs/API.md) for modulation controls.
 
 Preview changes only RAM. **Save** persists the entire validated configuration,
-including on/off. Count changes do not resize a running transport: Save, then
-request an authenticated explicit restart. Status separately reports active,
+including on/off, without rebooting the ESP. Themes, effects, brightness and
+other lighting controls do not need a restart. **Only a changed LED count needs
+Save followed by a manual restart** (paired BLE or authenticated HTTP).
+Status separately reports active,
 requested and saved counts, plus live/saved restart requirements and revisions.
 Reboot always restores saved settings; unsaved previews disappear.
+Valid saved settings take precedence after firmware updates too. The new built-in
+uses `builtin:light-blue`, which cannot collide with a legacy custom palette ID.
 
 The renderer uses fixed-lifetime RGB buffers, deterministic per-pixel variation,
 a wrap-safe elapsed clock and RMT channel 0. Both NeoPixelBus transport buffers
@@ -145,15 +218,20 @@ measurement is required before stating they are achieved.
 
 ## Admin, recovery and trust boundary
 
-- Shared authentication protects Wi-Fi changes/scans, restart, logout, both
+- HTTP administration protects Wi-Fi changes/scans, restart, logout, both
   resets and **every** firmware upload phase. Lighting controls are deliberately
   trusted-LAN operations, with same-origin/custom-header protection.
+- BLE configuration uses bonded, encrypted no-PIN pairing instead of a web login.
+  Another nearby phone can initiate pairing: this deliberately trusts the local
+  radio environment and is not an ownership/account or MITM-resistant scheme.
+  Wi-Fi credentials are never returned in status/configuration or stored by the app.
 - Salted PBKDF2-HMAC-SHA256 verifier uses bundled mbedTLS, random RAM sessions,
   login throttling, HttpOnly/SameSite cookies and CSRF. Credentials use a
   separate NVS namespace from settings. Writes are checked and read back;
   version/length/CRC/validation failures expose a recovery reason and defaults.
-- Wi-Fi reset preserves admin and lighting. Factory reset deliberately clears
-  all three. Both require login/CSRF and exact confirmation strings.
+- Wi-Fi reset preserves admin, lighting, and Bluetooth bonds. Factory reset
+  deliberately clears all four. HTTP operations require login/CSRF; BLE uses its
+  encrypted paired connection. Both require exact confirmation strings.
 - Optional **active-low physical recovery switch**: after verifying its carrier
   wiring, configure `PIXIES_RECOVERY_PIN`. Input sampling begins three seconds
   after boot; hold LOW for ten continuous seconds for factory recovery.
@@ -172,6 +250,75 @@ automatically. Authenticated OTA is not signed firmware, secure boot,
 anti-rollback, or a defense against a compromised admin/LAN/physical attacker.
 Do not expose this device through Internet forwarding. No credentials in
 build flags, source, URLs, ordinary exports, or browser persistent storage.
+
+## Releases and phone updates
+
+The app's **Updates** tab works without an ESP connection for Android updates.
+It checks published releases automatically without blocking Lights. Tap
+**Update Android app** to download a verified APK, then approve Android's
+installer. Allow **Install unknown apps** for Pixies if Android requests it.
+Opening that installer does not mean installation succeeded; the running app
+version confirms the result. iPhone app updates require Apple distribution.
+
+Connect to a controller to update its firmware over encrypted, bonded BLE.
+The app verifies the downloaded image's length and SHA-256, streams acknowledged
+chunks, and reconnects to the same controller. Success requires a new boot ID
+and the exact requested version. Keep the app open, controller powered, and
+phone nearby. Cancel before finalization if necessary; interrupted transfers
+do not select incomplete images. Saved settings remain intact; unsaved previews
+are lost when the ESP restarts.
+
+**First upgrade:** firmware 0.2.2 and earlier need one USB or authenticated
+browser upgrade to 0.3.0+ before BLE OTA works. Switching an existing
+development-signed Android app to the dedicated production key needs a one-time
+uninstall/reinstall. This does not intentionally erase the ESP's saved settings.
+
+### Prepare a reviewed release
+
+```sh
+make release-patch       # x.y.z -> x.y.(z+1)
+make release-minor       # x.y.z -> x.(y+1).0
+make release-major       # x.y.z -> (x+1).0.0
+```
+
+These commands dispatch **Prepare release** on `main`. It requires the current
+version to be published, increments the Android code, opens a release PR, and
+explicitly starts both CI workflows. It never merges. Review the PR and
+distribution notices before merging it. A version-changing merge starts
+**Publish release**, which builds both products, uses the main-only `release`
+signing environment, validates the complete artifacts, stages and verifies all
+assets, then publishes them together. A failed job does not publish a partial
+release. After publication, the phone can discover the new version.
+
+**Initial release:** merging this feature's `version.json` onto `main` publishes
+the version and Android code currently recorded in `version.json`. Do that
+deliberately; no existing public release is needed for this first version.
+The bump workflow handles subsequent versions. Retry a
+failed publication through its manual workflow on the same main commit; published
+versions and tags cannot be overwritten with other source.
+
+`make dist` writes `dist/release/`: firmware, production APK, `release.json`,
+`SHA256SUMS`, firmware source/relink materials, and mobile dependency notices.
+It requires committed source and a configured production certificate. For
+local packaging experiments only, the two Python packaging helpers accept
+`--allow-dirty`; those manifests are intentionally rejected by the app and
+publisher. HTTPS, hashes and GitHub trust are not signed ESP firmware, secure
+boot, or automatic rollback.
+
+### Preserve Android signing
+
+The private production key stays outside Git at
+`~/.config/esp32_pixies/signing/release.p12`; its password is in macOS login
+Keychain under service `esp32-pixies-android-release`, account `pixies-release`.
+**Back up both securely.** Losing either can prevent compatible future updates.
+Never put them in source, logs, release assets, or phone downloads.
+`android-signing.sha256` is the public certificate fingerprint, not a secret.
+
+`make signing-setup` configures or reuses that key and the four `release`
+environment secrets; it refuses accidental certificate replacement.
+Linux/CI builds use `ANDROID_KEYSTORE_PATH`, `ANDROID_KEYSTORE_PASSWORD`,
+`ANDROID_KEY_ALIAS`, and `ANDROID_KEY_PASSWORD` in the build environment.
+Release builds fail rather than silently using the public development key.
 
 ## Browser OTA and USB recovery
 

@@ -21,13 +21,14 @@ struct Settings {
   uint16_t ledCount = 200;
   bool on = true;
   uint8_t brightness = 25, speed = 50, intensity = 50, density = 50;
-  Effect effect = Effect::Steady;
-  char paletteId[25] = "halloween";
+  Effect effect = Effect::Twinkle;
+  char paletteId[25] = "builtin:light-blue";
   uint8_t customCount = 0;
   std::array<Palette, kMaxPalettes> custom{};
 };
 const Palette& halloween();
 const Palette& christmas();
+const Palette& lightBlue();
 const Palette* selectedPalette(const Settings&);
 const char* effectName(Effect);
 bool parseEffect(const char*, Effect&);

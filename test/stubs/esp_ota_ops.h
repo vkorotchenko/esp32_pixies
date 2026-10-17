@@ -1,6 +1,7 @@
 #pragma once
 #include <cstdint>
 #include <cstddef>
+#include "TestEsp.h"
 using esp_err_t=int;
 using esp_ota_handle_t=uint32_t;
 constexpr int ESP_OK=0;
@@ -16,8 +17,6 @@ inline void reset() {
   beginError=writeError=endError=verifyError=selectError=0;
 }
 }
-struct FakeEsp { uint32_t getFlashChipSize() const { return 16777216; } };
-inline FakeEsp ESP;
 inline const esp_partition_t* esp_ota_get_next_update_partition(const void*) { return &fake_ota::target; }
 inline const esp_partition_t* esp_ota_get_running_partition() { return &fake_ota::running; }
 inline int esp_ota_begin(const esp_partition_t*,size_t,esp_ota_handle_t* h) { ++fake_ota::begins; *h=1; return fake_ota::beginError; }

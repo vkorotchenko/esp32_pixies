@@ -6,6 +6,22 @@
 using namespace pixies;
 void setUp() {}
 void tearDown() {}
+void clean_defaults_preserve_saved_choices() {
+  Settings initial; const char* field;
+  TEST_ASSERT_TRUE(validate(initial,field));
+  TEST_ASSERT_EQUAL(Effect::Twinkle,initial.effect);
+  TEST_ASSERT_EQUAL_STRING("builtin:light-blue",initial.paletteId);
+  TEST_ASSERT_TRUE(selectedPalette(initial)->colors[0]==(Rgb{173,216,230}));
+  Settings saved=initial;
+  saved.effect=Effect::Steady; saved.on=false; saved.ledCount=333;
+  saved.customCount=1;
+  saved.custom[0]={"light-blue","Previously valid custom",1,{{{1,2,3}}}};
+  strcpy(saved.paletteId,"light-blue");
+  TEST_ASSERT_TRUE(validate(saved,field));
+  SettingsState reboot; reboot.restore(saved);
+  TEST_ASSERT_TRUE(equal(saved,reboot.live));
+  TEST_ASSERT_TRUE(selectedPalette(reboot.live)->colors[0]==(Rgb{1,2,3}));
+}
 void lengths() {
   const char* f; Settings s;
   for(unsigned n:{0,1,200,1000,1001}) {
@@ -69,6 +85,7 @@ void persistence_rules() {
 void effects_power() {
   std::array<Rgb,1002> frame{}, duplicate{}; Settings s;
   s.brightness=100;
+  s.effect=Effect::Steady; strcpy(s.paletteId,"halloween");
   render(s,0,frame.data(),2,9000);
   TEST_ASSERT_TRUE(frame[0]==halloween().colors[0]);
   TEST_ASSERT_TRUE(frame[1]==halloween().colors[1]);
@@ -166,7 +183,7 @@ void login_throttling() {
   TEST_ASSERT_EQUAL(0,throttle.retryAfter(2000));
 }
 int main() {
-  UNITY_BEGIN(); RUN_TEST(lengths); RUN_TEST(palettes); RUN_TEST(settings_json);
+  UNITY_BEGIN(); RUN_TEST(clean_defaults_preserve_saved_choices); RUN_TEST(lengths); RUN_TEST(palettes); RUN_TEST(settings_json);
   RUN_TEST(persistence_rules); RUN_TEST(effects_power); RUN_TEST(decisions);
   RUN_TEST(corrupt_records_and_images); RUN_TEST(login_throttling);
   return UNITY_END();

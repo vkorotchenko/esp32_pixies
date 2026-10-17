@@ -17,14 +17,6 @@ bool boundedText(JsonVariantConst v,size_t min,size_t max,String& out) {
   if(s.size()<min||s.size()>max||strlen(s.c_str())!=s.size()) return false;
   out=s.c_str(); return true;
 }
-bool wifiPassword(const String& p) {
-  if(p.length()==0) return true; // Explicitly selecting an open router is allowed.
-  if(p.length()==64) {
-    for(size_t i=0;i<64;++i) if(!isxdigit(static_cast<unsigned char>(p[i]))) return false;
-    return true;
-  }
-  return p.length()>=8&&p.length()<=63;
-}
 String authority(String value) {
   value.toLowerCase();
   if(value.endsWith(":80")) value.remove(value.length()-3);
@@ -106,54 +98,19 @@ bool WebApi::revision(JsonVariantConst v) {
 }
 void WebApi::config() {
   DynamicJsonDocument doc(pixies::kJsonCapacity);
-  doc["schemaVersion"]=1; doc["bootId"]=bootId_;
-  doc["revision"]=settings_.revision; doc["savedRevision"]=settings_.savedRevision;
-  doc["dirty"]=settings_.dirty(); doc["activeLedCount"]=settings_.activeCount;
-  doc["requestedLedCount"]=settings_.live.ledCount; doc["savedLedCount"]=settings_.persisted.ledCount;
-  doc["restartRequired"]=settings_.restartRequired();
-  doc["savedRestartRequired"]=settings_.persisted.ledCount!=settings_.activeCount;
-  pixies::writeSettings(doc.createNestedObject("config"),settings_.live);
+  device_.config(doc);
   json(200,doc);
 }
 void WebApi::status() {
   DynamicJsonDocument doc(4096);
-  doc["schemaVersion"]=1; doc["bootId"]=bootId_;
-  auto firmware=doc.createNestedObject("firmware");
-  firmware["version"]=PIXIES_VERSION; firmware["target"]=PIXIES_TARGET;
-  firmware["flashBytes"]=ESP.getFlashChipSize(); firmware["psramBytes"]=ESP.getPsramSize();
-  firmware["expectedFlashBytes"]=16777216; firmware["expectedPsramBytes"]=8388608;
-  firmware["memoryMatches"]=ESP.getFlashChipSize()==16777216&&ESP.getPsramSize()==8388608;
-  doc["uptimeMs"]=millis(); doc["freeHeapBytes"]=ESP.getFreeHeap();
-  auto s=doc.createNestedObject("settings");
-  s["revision"]=settings_.revision; s["savedRevision"]=settings_.savedRevision;
-  s["dirty"]=settings_.dirty(); s["activeLedCount"]=settings_.activeCount;
-  s["requestedLedCount"]=settings_.live.ledCount; s["savedLedCount"]=settings_.persisted.ledCount;
-  s["restartRequired"]=settings_.restartRequired();
-  s["savedRestartRequired"]=settings_.persisted.ledCount!=settings_.activeCount;
-  s["recovery"]=store_.settingsRecovery;
-  auto led=doc.createNestedObject("led");
-  led["ready"]=leds_.ready; led["gpio"]=PIXIES_LED_PIN; led["order"]=PIXIES_COLOR_GRB?"GRB":"RGB";
-  led["maxCount"]=pixies::kMaxLeds; led["budgetMa"]=PIXIES_CURRENT_MA;
-  led["estimatedMa"]=leds_.power.estimatedMa; led["requestedMa"]=leds_.power.requestedMa;
-  led["limited"]=leds_.power.limited; led["scalePermille"]=leds_.power.scalePermille;
-  led["frames"]=leds_.frames; led["pausedForUpdate"]=ota_.busy;
-  auto net=doc.createNestedObject("network");
-  net["state"]=network_.state; net["hostname"]=network_.hostname+".local";
-  net["connected"]=WiFi.status()==WL_CONNECTED;
-  net["ip"]=WiFi.status()==WL_CONNECTED?WiFi.localIP().toString():String("");
-  net["ssid"]=WiFi.status()==WL_CONNECTED?WiFi.SSID():String("");
-  net["apOpen"]=network_.apOpen; net["apSsid"]=network_.apSsid;
-  net["apIp"]=network_.apOpen?"192.168.4.1":"";
-  net["wifiSaved"]=network_.wifiSaved; net["candidateState"]=network_.candidateState;
-  net["scanState"]=network_.scanState; net["error"]=network_.error;
-  auto admin=doc.createNestedObject("admin");
-  admin["configured"]=admin_.configured; admin["credentialRecovery"]=store_.credentialRecovery;
-  admin["claimAllowed"]=pixies::canClaim(admin_.configured,network_.apOpen,network_.apPeer(server_.client()));
-  auto update=doc.createNestedObject("update");
-  update["state"]=ota_.state; update["busy"]=ota_.busy; update["receivedBytes"]=ota_.received();
-  update["expectedBytes"]=ota_.expected(); update["slotBytes"]=ota_.slotSize(); update["error"]=ota_.error;
-  doc["restarting"]=restartScheduled_;
+  device_.status(doc);
+  doc["admin"]["claimAllowed"]=pixies::canClaim(admin_.configured,network_.apOpen,network_.apPeer(server_.client()));
   json(200,doc);
+}
+void WebApi::invoke(const char* op,JsonVariantConst args) {
+  DynamicJsonDocument doc(pixies::kJsonCapacity);
+  const int code=device_.execute(op,args,doc);
+  json(code,doc);
 }
 void WebApi::session(bool newlyAuthenticated) {
   StaticJsonDocument<384> doc;
@@ -164,10 +121,9 @@ void WebApi::session(bool newlyAuthenticated) {
   doc["sessionLifetimeSeconds"]=1800;
   json(200,doc);
 }
-void WebApi::restartLater() { restartScheduled_=true; restartAt_=millis(); }
+void WebApi::restartLater() { device_.restartLater(); }
 void WebApi::begin() {
-  char id[17]; snprintf(id,sizeof id,"%08lx%08lx",static_cast<unsigned long>(esp_random()),static_cast<unsigned long>(esp_random()));
-  bootId_=id; admin_.begin();
+  device_.begin();
   const char* collected[]{"Content-Type","Origin","Cookie","X-CSRF-Token","X-Pixies-Request","X-Firmware-Size"};
   server_.collectHeaders(collected,6);
   server_.requestGate=[this](){ return requestGate(); };
@@ -209,31 +165,20 @@ void WebApi::begin() {
   server_.on("/api/status",HTTP_GET,[this](){ status(); });
   server_.on("/api/config",HTTP_GET,[this](){ config(); });
   server_.on("/api/palettes",HTTP_GET,[this](){
-    DynamicJsonDocument doc(pixies::kJsonCapacity);
-    auto list=doc.createNestedArray("palettes");
-    pixies::writePalette(list.createNestedObject(),pixies::halloween(),true);
-    pixies::writePalette(list.createNestedObject(),pixies::christmas(),true);
-    for(size_t i=0;i<settings_.live.customCount;++i) {
-      auto p=list.createNestedObject(); pixies::writePalette(p,settings_.live.custom[i],false); p["builtin"]=false;
-    }
-    json(200,doc);
+    invoke("palettes");
   });
   server_.on("/api/config",HTTP_PUT,[this](){
     if(!idle()) return;
     DynamicJsonDocument doc(pixies::kJsonCapacity);
     const char* keys[]{"baseRevision","config"};
-    if(!body(doc,keys,2)||!revision(doc["baseRevision"])) return;
-    pixies::Settings s; const char* field;
-    if(!pixies::readSettings(doc["config"],s,field)) { error(422,"validation","Invalid configuration; nothing applied",field); return; }
-    if(!settings_.preview(s,doc["baseRevision"])) { error(409,"revision_conflict","Reload configuration"); return; }
-    config();
+    if(!body(doc,keys,2)) return;
+    invoke("config.set",doc.as<JsonVariantConst>());
   });
   server_.on("/api/save",HTTP_POST,[this](){
     if(!idle()) return;
     StaticJsonDocument<128> doc; const char* keys[]{"baseRevision"};
-    if(!body(doc,keys,1)||!revision(doc["baseRevision"])) return;
-    if(!store_.saveSettings(settings_.live)) { error(500,"storage_failed","Settings were not confirmed saved"); return; }
-    settings_.saved(); config();
+    if(!body(doc,keys,1)) return;
+    invoke("config.save",doc.as<JsonVariantConst>());
   });
   server_.on("/api/auth/session",HTTP_GET,[this](){ session(); });
   server_.on("/api/auth/claim",HTTP_POST,[this](){
@@ -268,62 +213,38 @@ void WebApi::begin() {
   server_.on("/api/wifi/scan",HTTP_POST,[this](){
     if(!adminGuard()||!idle()) return;
     StaticJsonDocument<96> doc; if(!body(doc,nullptr,0)) return;
-    if(!network_.startScan()) { error(409,"busy","Scan cannot start during another connection/scan"); return; }
-    doc["state"]="running"; json(202,doc);
+    invoke("wifi.scan");
   });
   server_.on("/api/wifi/scan",HTTP_GET,[this](){
     if(!adminGuard(false)) return;
-    DynamicJsonDocument doc(4096); doc["state"]=network_.scanState;
-    auto list=doc.createNestedArray("networks");
-    const int total=WiFi.scanComplete();
-    if(!strcmp(network_.scanState,"complete")&&total>=0) for(int i=0;i<total&&i<20;++i) {
-      auto net=list.createNestedObject(); net["ssid"]=WiFi.SSID(i); net["rssi"]=WiFi.RSSI(i);
-      net["channel"]=WiFi.channel(i); net["open"]=WiFi.encryptionType(i)==WIFI_AUTH_OPEN;
-    }
-    doc["truncated"]=total>20; json(200,doc);
+    invoke("wifi.scan.get");
   });
   server_.on("/api/wifi/connect",HTTP_POST,[this](){
     if(!adminGuard()||!idle()) return;
-    StaticJsonDocument<512> doc; const char* keys[]{"ssid","password"}; String ssid,password;
+    StaticJsonDocument<512> doc; const char* keys[]{"ssid","password"};
     if(!body(doc,keys,2)) return;
-    if(!boundedText(doc["ssid"],1,32,ssid)||!boundedText(doc["password"],0,64,password)||!wifiPassword(password)) {
-      error(422,"validation","SSID must be 1..32 bytes; Wi-Fi password empty, 8..63 bytes, or 64 hex digits"); return;
-    }
-    WifiCredential candidate;
-    memcpy(candidate.ssid,ssid.c_str(),ssid.length()+1);
-    memcpy(candidate.password,password.c_str(),password.length()+1);
-    memset(const_cast<char*>(password.c_str()),0,password.length());
-    const bool ok=network_.connectCandidate(candidate); candidate={};
-    if(!ok) { error(409,"busy","Another Wi-Fi operation is active"); return; }
-    doc.clear(); doc["state"]="connecting"; json(202,doc);
+    invoke("wifi.connect",doc.as<JsonVariantConst>());
   });
   server_.on("/api/wifi/reset",HTTP_POST,[this](){
     if(!adminGuard()||!idle()) return;
     StaticJsonDocument<160> doc; const char* keys[]{"confirm"};
     if(!body(doc,keys,1)) return;
-    if(doc["confirm"]!="wifi-reset") { error(422,"confirmation","Expected confirm: wifi-reset"); return; }
-    if(network_.operationBusy()) { error(409,"busy","Wi-Fi operation is active"); return; }
-    if(!network_.resetWifi()) { error(500,"storage_failed","Wi-Fi credentials could not be removed"); return; }
-    doc.clear(); doc["state"]="setup_ap"; doc["apIp"]="192.168.4.1"; json(200,doc);
+    invoke("wifi.reset",doc.as<JsonVariantConst>());
   });
   server_.on("/api/restart",HTTP_POST,[this](){
     if(!adminGuard()||!idle()) return;
     StaticJsonDocument<160> doc; const char* keys[]{"confirm"};
     if(!body(doc,keys,1)) return;
-    if(doc["confirm"]!="restart") { error(422,"confirmation","Expected confirm: restart"); return; }
-    if(network_.operationBusy()) { error(409,"busy","Wi-Fi operation is active"); return; }
-    doc.clear(); doc["restarting"]=true; json(202,doc); restartLater();
+    invoke("restart",doc.as<JsonVariantConst>());
   });
   server_.on("/api/factory-reset",HTTP_POST,[this](){
     if(!adminGuard()||!idle()) return;
     StaticJsonDocument<160> doc; const char* keys[]{"confirm"};
     if(!body(doc,keys,1)) return;
-    if(doc["confirm"]!="factory-reset") { error(422,"confirmation","Expected confirm: factory-reset"); return; }
-    if(network_.operationBusy()) { error(409,"busy","Wi-Fi operation is active"); return; }
-    if(!store_.factoryReset()) { error(500,"storage_failed","Reset incomplete; USB recovery may be needed"); return; }
-    admin_.logout(); doc.clear(); doc["restarting"]=true; json(202,doc); restartLater();
+    invoke("factory-reset",doc.as<JsonVariantConst>());
   });
   server_.on("/api/update",HTTP_POST,[this](){
+    if(ota_.owns(OtaOwner::Ble)) { error(409,"busy","Bluetooth firmware update in progress"); return; }
     if(!adminGuard()||!ota_.select()) {
       if(ota_.busy) ota_.abort("boot_select_failed");
       // select errors are separate from failures already answered by the guard.
@@ -340,8 +261,6 @@ void WebApi::begin() {
   server_.begin();
 }
 void WebApi::tick(uint32_t now) {
-  admin_.expire(now);
-  network_.holdAp=ota_.busy;
-  if(restartScheduled_&&pixies::elapsed(now,restartAt_,1000)) { ESP.restart(); return; }
+  if(!device_.tick(now)) return;
   server_.handleClient();
 }

@@ -2,6 +2,8 @@ name: Firmware and local UI
 on:
   push:
   pull_request:
+  workflow_dispatch:
+  workflow_call:
 permissions:
   contents: read
 jobs:
@@ -19,6 +21,8 @@ jobs:
         run: python -m pip install platformio==6.2.0
       - name: Native core and adapter tests
         run: pio test -e native
+      - name: Shared release versioning and helper tests
+        run: python -m unittest discover -s scripts/tests
       - name: Browser logic tests (no npm dependencies)
         run: npm test
       - name: Partition table checks
