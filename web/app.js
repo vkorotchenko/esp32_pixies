@@ -4,7 +4,7 @@ export const EFFECTS = Object.freeze(["steady", "twinkle", "candle", "breathe", 
 export const PREVIEW_INTERVAL_MS = 350;
 export const MAX_IMAGE_BYTES = 0x700000;
 const CONFIG_KEYS = ["ledCount", "on", "brightness", "speed", "intensity", "density", "effect", "paletteId", "customPalettes"];
-const BUILTIN_IDS = ["halloween", "christmas"];
+const BUILTIN_IDS = ["builtin:light-blue", "halloween", "christmas"];
 const clone = value => structuredClone(value);
 const object = value => value !== null && typeof value === "object" && !Array.isArray(value);
 const exactKeys = (value, keys) => object(value) && Object.keys(value).length === keys.length && keys.every(key => Object.hasOwn(value, key));
@@ -39,7 +39,7 @@ export function validateConfig(config) {
       if (typeof color !== "string" || !colorPattern.test(color)) errors[`${prefix}.colors[${i}]`] = "Use a six-digit RGB color, for example #FF8000.";
     });
   });
-  if (typeof config.paletteId !== "string" || !idPattern.test(config.paletteId) || !ids.has(config.paletteId)) errors.paletteId = "Choose a theme included in this configuration.";
+  if (typeof config.paletteId !== "string" || (!idPattern.test(config.paletteId) && !BUILTIN_IDS.includes(config.paletteId)) || !ids.has(config.paletteId)) errors.paletteId = "Choose a theme included in this configuration.";
   return errors;
 }
 
@@ -162,10 +162,10 @@ export function checkStatus(data) {
   return data;
 }
 export function checkPalettes(data) {
-  if (!Array.isArray(data?.palettes) || data.palettes.length < 2 || data.palettes.length > 12) throw protocolError();
+  if (!Array.isArray(data?.palettes) || data.palettes.length < 3 || data.palettes.length > 13) throw protocolError();
   const ids = new Set();
   for (const p of data.palettes) {
-    if (!object(p) || typeof p.id !== "string" || !idPattern.test(p.id) || ids.has(p.id) || typeof p.name !== "string"
+    if (!object(p) || typeof p.id !== "string" || (!idPattern.test(p.id) && !BUILTIN_IDS.includes(p.id)) || ids.has(p.id) || typeof p.name !== "string"
       || typeof p.builtin !== "boolean" || !Array.isArray(p.colors) || !integer(p.colors.length, 1, 8)
       || p.colors.some(c => typeof c !== "string" || !colorPattern.test(c))) throw protocolError();
     ids.add(p.id);

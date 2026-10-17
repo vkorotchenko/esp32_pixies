@@ -11,7 +11,7 @@
 #ifndef PIXIES_RECOVERY_PIN
 #define PIXIES_RECOVERY_PIN -1
 #endif
-#define PIXIES_VERSION "0.1.0"
+#define PIXIES_VERSION "0.2.0"
 #define PIXIES_TARGET "esp32s3_n16r8"
 // Carrier unconfirmed: a deliberately opted-in, active-low recovery input.
 // Never assign PSRAM/USB/strapping pins without verifying the actual carrier.

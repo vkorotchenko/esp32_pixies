@@ -1,0 +1,99 @@
+name: Bluetooth mobile app
+on:
+  push:
+    paths:
+      - "mobile/**"
+      - "src/BleControl.*"
+      - "src/DeviceControl.*"
+      - "lib/PixiesCore/**"
+      - ".github/workflows/mobile.yml"
+  pull_request:
+    paths:
+      - "mobile/**"
+      - "src/BleControl.*"
+      - "src/DeviceControl.*"
+      - "lib/PixiesCore/**"
+      - ".github/workflows/mobile.yml"
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  sources:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: mobile
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: mobile/package-lock.json
+      - run: npm ci --no-audit --no-fund
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm test -- --runInBand
+  android:
+    needs: sources
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    defaults:
+      run:
+        working-directory: mobile
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: mobile/package-lock.json
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: gradle/actions/setup-gradle@v4
+      - run: npm ci --no-audit --no-fund
+      - name: Build bundled, development-signed arm64 APK
+        run: npm run apk -- -PreactNativeArchitectures=arm64-v8a
+      - name: Require the offline JavaScript bundle
+        run: python3 -c 'import zipfile; z=zipfile.ZipFile("android/app/build/outputs/apk/release/app-release.apk"); assert z.getinfo("assets/index.android.bundle").file_size > 0'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pixies-android-arm64
+          path: mobile/android/app/build/outputs/apk/release/app-release.apk
+          if-no-files-found: error
+  ios:
+    needs: sources
+    runs-on: macos-latest
+    timeout-minutes: 50
+    defaults:
+      run:
+        working-directory: mobile
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: mobile/package-lock.json
+      - run: npm ci --no-audit --no-fund
+      - name: Install iOS pods
+        run: cd ios && pod install --repo-update
+      - name: Compile a bundled unsigned iOS Simulator app
+        run: |
+          set -o pipefail
+          xcodebuild -workspace ios/Pixies.xcworkspace -scheme Pixies \
+            -configuration Release -sdk iphonesimulator \
+            -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath ios/build CODE_SIGNING_ALLOWED=NO \
+            > ios/xcodebuild.log 2>&1 || { tail -n 160 ios/xcodebuild.log; exit 1; }
+          test -s ios/build/Build/Products/Release-iphonesimulator/Pixies.app/main.jsbundle
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pixies-ios-build-evidence
+          path: |
+            mobile/ios/Podfile.lock
+            mobile/ios/xcodebuild.log
+          if-no-files-found: error

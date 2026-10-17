@@ -3,6 +3,10 @@
 #include <cstring>
 
 namespace pixies {
+const Palette& lightBlue() {
+  static const Palette p{"builtin:light-blue", "Light blue", 1, {{{173,216,230}}}};
+  return p;
+}
 const Palette& halloween() {
   static const Palette p{"halloween", "Halloween", 2, {{{0,255,0},{255,165,0}}}};
   return p;
@@ -21,6 +25,7 @@ bool parseEffect(const char* name, Effect& out) {
   return false;
 }
 const Palette* selectedPalette(const Settings& s) {
+  if (!strcmp(s.paletteId,"builtin:light-blue")) return &lightBlue();
   if (!strcmp(s.paletteId,"halloween")) return &halloween();
   if (!strcmp(s.paletteId,"christmas")) return &christmas();
   for (size_t i=0; i<std::min(size_t(s.customCount),kMaxPalettes); ++i)
@@ -53,7 +58,8 @@ bool validate(const Settings& s, const char*& field) {
     for (size_t j=0; j<i; ++j) if (!strcmp(p.id,s.custom[j].id)) return false;
   }
   field = "paletteId";
-  if (!text(s.paletteId,sizeof s.paletteId,true) || !selectedPalette(s)) return false;
+  if ((!text(s.paletteId,sizeof s.paletteId,true) &&
+       strncmp(s.paletteId,"builtin:light-blue",sizeof s.paletteId)) || !selectedPalette(s)) return false;
   field = "";
   return true;
 }

@@ -1,0 +1,96 @@
+# Pixies BLE control v1
+
+BLE is the normal local control/provisioning path on ESP32-S3. Bluetooth Classic
+is not supported. Advertisements contain the service UUID below; the scan response
+contains `Pixies-<device-id>`. Discover by service, not by an assumed MAC/name.
+One phone controls a connection; disconnect to switch phones.
+
+| Item | UUID | Properties |
+| --- | --- | --- |
+| Service | `9a77e401-8c5b-4c3b-908a-6c749f662800` | Pixies control |
+| RX | `9a77e402-8c5b-4c3b-908a-6c749f662800` | Write with response, encrypted |
+| TX | `9a77e403-8c5b-4c3b-908a-6c749f662800` | Notify |
+
+The server requests bonding and LE Secure Connections with no-input/output
+pairing. Accept the phone's normal prompt; no application account/password/PIN
+is required. Only encrypted bonded peers can submit commands. No-PIN pairing
+does not establish ownership or resist an active MITM during pairing. Any nearby
+phone may attempt to pair. Do not expose HTTP to the Internet.
+
+## Packet framing
+
+Integers are unsigned little-endian. Each write/notification is **at most**
+`min(MTU - 3, 244)` bytes; default MTU 23 is supported.
+
+| Offset | Size | Meaning |
+| --- | --- | --- |
+| 0 | 1 | Version, exactly `1` |
+| 1 | 1 | Direction: `0` request, `1` response |
+| 2 | 2 | Nonzero transaction ID |
+| 4 | 2 | Payload offset within the complete message |
+| 6 | 2 | Complete message byte length, 1..8192 |
+| 8 | remaining | UTF-8 JSON bytes; may split a UTF-8 character |
+
+Use one transaction at a time. Start at offset zero, keep ID/length constant,
+and send contiguous fragments. Decode UTF-8/JSON only after full reassembly.
+Assembly/response deadlines are 30 seconds. Disconnect drops incomplete input;
+malformed/overlapping input gets an explicit error or a disconnected link when a
+usable ID/response channel is unavailable. Queue overflow disconnects, never
+acknowledges an applied command. GATT write acknowledgement alone is not command
+success; wait for the framed response.
+
+The minimum-MTU vector for response `{}` and ID `0x1234` is:
+`01 01 34 12 00 00 02 00 7B 7D`.
+
+Request: `{"op":"config","args":{}}`.
+Response: `{"status":200,"body":{...}}`.
+
+The body uses the same sanitized response/error/configuration schema as
+[HTTP API v1](API.md). A non-2xx status is a failure, not a successful default.
+Notification loss/timeouts can leave the result uncertain; reconnect and read
+state rather than automatically replaying a Save, restart, or credentials.
+
+## Commands
+
+| `op` | Exact `args` | Result |
+| --- | --- | --- |
+| `config` | `{}` | Current configuration/revisions/counts |
+| `status` | `{}` | Sanitized device, LED, Wi-Fi, update state |
+| `palettes` | `{}` | Three built-ins plus current custom palettes |
+| `config.set` | `{"baseRevision":n,"config":{...}}` | Atomic RAM preview, new revision |
+| `config.save` | `{"baseRevision":n}` | Checked NVS Save, same config envelope |
+| `wifi.scan` | `{}` | 202, asynchronous ESP-side scan started |
+| `wifi.scan.get` | `{}` | Scan state and up to 20 networks |
+| `wifi.connect` | `{"ssid":"...","password":"..."}` | 202, candidate testing started |
+| `wifi.reset` | `{"confirm":"wifi-reset"}` | Remove Wi-Fi only, retain lights/bonds/admin |
+| `restart` | `{"confirm":"restart"}` | 202, delayed restart |
+| `factory-reset` | `{"confirm":"factory-reset"}` | Clear settings, credentials, admin and bonds; restart |
+| `admin.claim` | `{"password":"..."}` | Optional first website-admin setup, 12..64 bytes |
+
+`admin.claim` is not an app login and is unnecessary for BLE control. Existing web
+administration still requires its normal password/session; BLE initial setup is
+an alternative to initial protected-AP claim, not a new unauthenticated HTTP route.
+
+Poll status after Wi-Fi connect: success requires `candidateState:"succeeded"`,
+`connected:true`, and `wifiSaved:true`, not just a 202 reply. Failed candidates
+do not replace previously saved credentials. Passwords are never echoed.
+
+Both transports share configuration, revisions, Save, network operations and
+OTA/restart busy checks. A browser edit can cause a BLE revision conflict:
+reload deliberately rather than silently overwriting another controller.
+
+## Defaults, recovery, and acceptance
+
+With no valid saved lighting record, use `builtin:light-blue`, `twinkle`, 200
+pixels, brightness 25%. Valid saved settings override defaults across restart
+and firmware updates. Wi-Fi failure/reset does not reset lighting. Normal USB
+and browser updates preserve NVS; factory reset intentionally restores defaults.
+
+Factory reset also clears ESP bond keys. If a phone retains its old bond, forget
+Pixies in the phone's Bluetooth settings and pair again.
+
+Real-phone acceptance requires Android and iPhone pairing, denied permissions,
+disconnect/reconnect, maximum palettes at minimum/negotiated MTU, Save/reboot,
+wrong Wi-Fi credentials without losing old settings, BLE during Wi-Fi scanning,
+and mutations rejected during browser OTA. Simulator/unit builds cannot prove
+these physical/radio behaviors or actual LED output.

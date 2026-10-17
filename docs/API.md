@@ -104,8 +104,8 @@ Disconnects may have no response; reload status/config instead of claiming succe
     "speed": 50,
     "intensity": 50,
     "density": 50,
-    "effect": "steady",
-    "paletteId": "halloween",
+    "effect": "twinkle",
+    "paletteId": "builtin:light-blue",
     "customPalettes": []
   }
 }

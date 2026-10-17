@@ -12,8 +12,8 @@
     "speed": { "type": "integer", "minimum": 0, "maximum": 100, "default": 50 },
     "intensity": { "type": "integer", "minimum": 0, "maximum": 100, "default": 50 },
     "density": { "type": "integer", "minimum": 0, "maximum": 100, "default": 50 },
-    "effect": { "enum": ["steady", "twinkle", "candle", "breathe", "chase"], "default": "steady" },
-    "paletteId": { "type": "string", "minLength": 1, "maxLength": 24, "pattern": "^[a-z0-9_-]+$", "default": "halloween" },
+    "effect": { "enum": ["steady", "twinkle", "candle", "breathe", "chase"], "default": "twinkle" },
+    "paletteId": { "type": "string", "minLength": 1, "maxLength": 24, "pattern": "^(builtin:light-blue|[a-z0-9_-]+)$", "default": "builtin:light-blue" },
     "customPalettes": {
       "type": "array",
       "minItems": 0,

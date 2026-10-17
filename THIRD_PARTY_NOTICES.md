@@ -8,6 +8,10 @@ protocol, or pin configuration was copied.
 |---|---|---|
 | NeoPixelBus | 2.8.4 | LGPL-3.0; [source and COPYING](https://github.com/Makuna/NeoPixelBus/tree/2.8.4) |
 | ArduinoJson | 6.21.5 | MIT; [source and license](https://github.com/bblanchon/ArduinoJson/tree/v6.21.5) |
+| NimBLE-Arduino | 2.5.1 | Apache-2.0; [source and license](https://github.com/h2zero/NimBLE-Arduino/tree/2.5.1) |
+| React / React Native | 19.2.3 / 0.84.1 | MIT; [React](https://github.com/facebook/react) and [React Native](https://github.com/facebook/react-native) |
+| react-native-ble-plx | 3.5.1 | Apache-2.0; [source and license](https://github.com/dotintent/react-native-ble-plx/tree/3.5.1) |
+| buffer / react-native-safe-area-context / community slider | Locked in `mobile/package-lock.json` | MIT; retain the installed packages' notices. |
 | Arduino-ESP32 | 2.0.17 family, platform-resolved patch package | LGPL-2.1 portions, Espressif/ESP-IDF Apache-2.0 and bundled component licenses; [source](https://github.com/espressif/arduino-esp32/tree/2.0.17) |
 | ESP-IDF / mbedTLS | Bundled by the pinned Arduino platform | Apache-2.0 and individual bundled notices; retain the exact installed SDK licenses. |
 | PlatformIO Espressif32 | 7.1.3 | Apache-2.0; [platform source](https://github.com/platformio/platform-espressif32/tree/v7.1.3) |

@@ -1,12 +1,13 @@
 // Synthetic device data for Node/browser exercises only. Never imported by production.
 export function configFixture(overrides = {}) {
-  return { ledCount: 200, on: true, brightness: 25, speed: 50, intensity: 50, density: 50, effect: "steady", paletteId: "halloween", customPalettes: [], ...overrides };
+  return { ledCount: 200, on: true, brightness: 25, speed: 50, intensity: 50, density: 50, effect: "twinkle", paletteId: "builtin:light-blue", customPalettes: [], ...overrides };
 }
 export function snapshotFixture(config = configFixture(), overrides = {}) {
   return { schemaVersion: 1, bootId: "0123456789abcdef", revision: 1, savedRevision: 1, dirty: false, activeLedCount: 200, requestedLedCount: config.ledCount, savedLedCount: 200, restartRequired: config.ledCount !== 200, savedRestartRequired: false, config: structuredClone(config), ...overrides };
 }
 export function palettesFixture() {
   return [
+    { id: "builtin:light-blue", name: "Light blue", builtin: true, colors: ["#ADD8E6"] },
     { id: "halloween", name: "Halloween", builtin: true, colors: ["#00FF00", "#FFA500"] },
     { id: "christmas", name: "Christmas", builtin: true, colors: ["#FF0000", "#FFFFFF", "#00FF00"] },
   ];

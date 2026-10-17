@@ -2,6 +2,7 @@
 // Stateful radio boundary for the REAL NetworkManager/SettingsStore adapters.
 // begin() starts an attempt; only an explicit test event establishes a link.
 #include "Preferences.h"
+#include "TestEsp.h"
 #include <cstdint>
 #include <cstdio>
 #include <vector>
@@ -15,16 +16,18 @@ class IPAddress {
     char text[16]; snprintf(text,sizeof text,"%u.%u.%u.%u",bytes_[0],bytes_[1],bytes_[2],bytes_[3]); return text;
   }
 };
-enum { WIFI_STA=1,WIFI_AP_STA=3,WL_CONNECTED=3,WL_DISCONNECTED=6,WIFI_SCAN_FAILED=-2 };
+enum { WIFI_STA=1,WIFI_AP_STA=3,WL_CONNECTED=3,WL_DISCONNECTED=6,WIFI_SCAN_FAILED=-2,WIFI_AUTH_OPEN=0 };
 namespace fake_wifi {
 inline uint32_t now=100;
 inline bool connected=false,hasIp=false,ap=false,protectedAp=false;
 inline unsigned disconnects=0,apCloses=0;
+inline unsigned& restarts=fake_esp::restarts;
+inline int scanCount=0;
 inline std::string ssid,requested;
 inline std::vector<std::string> events;
 inline void reset() {
   now=100; connected=hasIp=ap=protectedAp=false;
-  disconnects=apCloses=0; ssid.clear(); requested.clear(); events.clear();
+  disconnects=apCloses=restarts=0; scanCount=0; ssid.clear(); requested.clear(); events.clear();
 }
 inline void connect(const char* name,bool ip=true) { connected=true; hasIp=ip; ssid=name; }
 }
@@ -58,7 +61,11 @@ class FakeWiFi {
   int status() const { return fake_wifi::connected?WL_CONNECTED:WL_DISCONNECTED; }
   IPAddress localIP() const { return fake_wifi::hasIp?IPAddress(10,0,0,2):IPAddress(0,0,0,0); }
   String SSID() const { return fake_wifi::ssid; }
-  int scanComplete() const { return 0; }
+  String SSID(int) const { return "fixture-router"; }
+  int RSSI(int) const { return -50; }
+  int channel(int) const { return 6; }
+  int encryptionType(int) const { return 1; }
+  int scanComplete() const { return fake_wifi::scanCount; }
   void scanDelete() {}
   int scanNetworks(bool,bool,bool,int) { return -1; }
 };
@@ -67,6 +74,3 @@ inline struct FakeSerial {
   template<class... T> void printf(const char*,T...) const {}
   void println(const char*) const {}
 } Serial;
-inline struct FakeESP {
-  uint64_t getEfuseMac() const { return 0x123456789abcULL; }
-} ESP;

@@ -1,18 +1,24 @@
 # ESP32 Pixies
 
 Local, offline-capable controller for one 5V WS2812 serial string. PlatformIO
-Arduino firmware for **ESP32-S3-WROOM-1-N16R8**, a protected setup hotspot,
-palette/effect controls, explicit Save, and authenticated browser application OTA.
+Arduino firmware for **ESP32-S3-WROOM-1-N16R8**, a React Native Android/iPhone
+Bluetooth companion, palette/effect controls, explicit Save, optional local Wi-Fi,
+and browser application OTA.
 
-**Status:** firmware compiles and native simulations exercise pure logic and
-selected adapters. The embedded UI is intentionally minimal; final frontend and
-independent review follow separately. No physical carrier, wiring, timing,
-network or OTA acceptance is asserted by a software build.
+**Connection:** use the [mobile app](mobile/README.md) over Bluetooth Low Energy.
+No hotspot join, app account, or custom PIN is required. The website remains an
+optional local-network/fallback interface.
+
+**Hardware status:** USB programming and startup were verified on the target
+module. Physical LED output and the new phone BLE workflows still require
+acceptance on the actual assembly. A successful build is not a wiring, signal,
+radio, or OTA acceptance result.
 
 ## Build and test
 
 Requires Python/PlatformIO Core 6.2.0, a native C++17 compiler for tests, and Node
-24. No npm dependencies or production Node server.
+24. Web tests need no npm dependencies or production Node server; the native app
+has its own dependency manifest and build steps in `mobile/`.
 
 ```sh
 pio test -e native
@@ -32,7 +38,7 @@ python3 -m venv .venv
 ```
 
 Pinned inputs: `espressif32@7.1.3` (Arduino core 2.0.17 family),
-`NeoPixelBus@2.8.4`, `ArduinoJson@6.21.5`. The platform's framework/tool package
+`NeoPixelBus@2.8.4`, `ArduinoJson@6.21.5`, `NimBLE-Arduino@2.5.1`. The platform's framework/tool package
 patch build may vary within its compatible range; inspect the build's package
 list when reproducing a binary. CI uses the same build/test commands.
 
@@ -89,6 +95,26 @@ behavior; use suitable real protection.
 
 ## First boot and offline operation
 
+1. With verified hardware, upload the Bluetooth-enabled firmware once over USB.
+   Normal updates preserve NVS; do not erase flash to change lighting.
+2. Install the native app, tap **Scan controllers**, and select your Pixies.
+   Accept the phone's Bluetooth permission/pairing prompt if shown.
+3. Select a theme/effect, adjust the controls, and tap **Preview** or **Save**.
+   Preview is RAM-only; Save restores your choices after restart. A clean device
+   starts light-blue twinkling at 25% brightness.
+4. Wi-Fi is optional. The app asks the ESP to scan 2.4 GHz networks, submits the
+   chosen credentials over encrypted BLE, and reports the verified result/IP.
+   Your phone stays on its normal network. Lighting keeps running without a router.
+5. The app needs no administration password. If browser administration/OTA is
+   wanted, optionally set a website password in the app's Device screen.
+
+The installed app includes its JavaScript bundle; normal operation requires
+neither Metro nor Internet. Local Wi-Fi setup does **not** create remote Internet
+access, a cloud account, or a port-forwarding rule. That is a separate future feature.
+See [BLE commands and framing](docs/BLE.md).
+
+### Optional website/hotspot fallback
+
 1. After confirming hardware, install by the carrier's normal USB procedure
    (`pio run -e esp32s3_n16r8 -t upload`, only with explicit operator approval).
 2. Open the **local USB console**, 115200. The device prints
@@ -117,17 +143,19 @@ the old credentials. All web assets work without Internet access.
 
 ## Lighting, Save and power
 
-Defaults: 200 pixels, on, brightness 25%, Halloween green/orange, steady;
+Clean-device defaults: 200 pixels, on, brightness 25%, light blue `#ADD8E6`, twinkle;
 speed/intensity/density 50%. Supported count 1..1000. Halloween and Christmas
-red/white/green are immutable. Up to ten custom named palettes, each 1..8 colors.
+red/white/green and Light blue are immutable. Up to ten custom named palettes, each 1..8 colors.
 Themes and effects are independent. Effects: steady, twinkle, candle, breathe,
 chase; see [the exact API](docs/API.md) for modulation controls.
 
 Preview changes only RAM. **Save** persists the entire validated configuration,
 including on/off. Count changes do not resize a running transport: Save, then
-request an authenticated explicit restart. Status separately reports active,
+request an explicit restart (paired BLE or authenticated HTTP). Status separately reports active,
 requested and saved counts, plus live/saved restart requirements and revisions.
 Reboot always restores saved settings; unsaved previews disappear.
+Valid saved settings take precedence after firmware updates too. The new built-in
+uses `builtin:light-blue`, which cannot collide with a legacy custom palette ID.
 
 The renderer uses fixed-lifetime RGB buffers, deterministic per-pixel variation,
 a wrap-safe elapsed clock and RMT channel 0. Both NeoPixelBus transport buffers
@@ -145,15 +173,20 @@ measurement is required before stating they are achieved.
 
 ## Admin, recovery and trust boundary
 
-- Shared authentication protects Wi-Fi changes/scans, restart, logout, both
+- HTTP administration protects Wi-Fi changes/scans, restart, logout, both
   resets and **every** firmware upload phase. Lighting controls are deliberately
   trusted-LAN operations, with same-origin/custom-header protection.
+- BLE configuration uses bonded, encrypted no-PIN pairing instead of a web login.
+  Another nearby phone can initiate pairing: this deliberately trusts the local
+  radio environment and is not an ownership/account or MITM-resistant scheme.
+  Wi-Fi credentials are never returned in status/configuration or stored by the app.
 - Salted PBKDF2-HMAC-SHA256 verifier uses bundled mbedTLS, random RAM sessions,
   login throttling, HttpOnly/SameSite cookies and CSRF. Credentials use a
   separate NVS namespace from settings. Writes are checked and read back;
   version/length/CRC/validation failures expose a recovery reason and defaults.
-- Wi-Fi reset preserves admin and lighting. Factory reset deliberately clears
-  all three. Both require login/CSRF and exact confirmation strings.
+- Wi-Fi reset preserves admin, lighting, and Bluetooth bonds. Factory reset
+  deliberately clears all four. HTTP operations require login/CSRF; BLE uses its
+  encrypted paired connection. Both require exact confirmation strings.
 - Optional **active-low physical recovery switch**: after verifying its carrier
   wiring, configure `PIXIES_RECOVERY_PIN`. Input sampling begins three seconds
   after boot; hold LOW for ten continuous seconds for factory recovery.
