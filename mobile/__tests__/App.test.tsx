@@ -4,6 +4,7 @@ import {
   AppState,
   AppStateStatus,
   BackHandler,
+  Modal,
   Platform,
   StyleSheet,
 } from 'react-native';
@@ -158,6 +159,13 @@ test('opens the full disabled Lights form immediately with settings hidden behin
   expect(rendered.root.findByProps({ label: 'Save' }).props.disabled).toBe(
     true,
   );
+  expect(
+    rendered.root.findByProps({ label: 'Add color' }).props.disabled,
+  ).toBe(true);
+  expect(
+    rendered.root.findByProps({ accessibilityLabel: 'Edit color 1' }).props
+      .disabled,
+  ).toBe(true);
   expect(
     StyleSheet.flatten(
       rendered.root.findByProps({ testID: 'lighting-controls' }).props.style,
@@ -484,6 +492,372 @@ test('Preview explains Save without implying a reboot or claiming unchanged save
     'config.set',
   ]);
 });
+test('RGB picker Done and Cancel stay local until the palette draft is explicitly Previewed or Saved', async () => {
+  let current = configuration();
+  const command = jest
+    .spyOn(PixiesClient.prototype, 'command')
+    .mockImplementation(async (op, args) => {
+      if (op === 'status')
+        return { ...healthFixture(), bootId: current.bootId };
+      if (op === 'config') return current;
+      if (op === 'config.set' && isConfig(args?.config)) {
+        current = {
+          ...current,
+          config: args.config,
+          revision: current.revision + 1,
+          dirty: true,
+        };
+        return current;
+      }
+      if (op === 'config.save') {
+        current = {
+          ...current,
+          savedRevision: current.revision,
+          dirty: false,
+        };
+        return current;
+      }
+      throw new Error(`Unexpected operation: ${op}`);
+    });
+  await connectController();
+  expect(
+    rendered.root.findAllByProps({ accessibilityLabel: 'Palette colors' }),
+  ).toHaveLength(0);
+  expect(
+    rendered.root.findByProps({ label: 'Remove color 1' }).props.disabled,
+  ).toBe(true);
+  await act(async () =>
+    rendered.root.findByProps({ label: 'Remove color 1' }).props.onPress(),
+  );
+  const color = () =>
+    rendered.root.findByProps({ accessibilityLabel: 'Edit color 1' }).props
+      .accessibilityValue.text;
+  expect(color()).toBe('#ADD8E6');
+  await act(async () =>
+    rendered.root
+      .findByProps({ accessibilityLabel: 'Edit color 1' })
+      .props.onPress(),
+  );
+  for (const [channel, value] of [
+    ['Red', 0],
+    ['Green', 255],
+    ['Blue', 0],
+  ] as const) {
+    const slider = rendered.root.findByProps({
+      accessibilityLabel: `${channel} channel`,
+    });
+    expect(slider.props).toMatchObject({
+      minimumValue: 0,
+      maximumValue: 255,
+      step: 1,
+      disabled: false,
+    });
+    await act(async () => slider.props.onValueChange(value));
+  }
+  expect(
+    StyleSheet.flatten(
+      rendered.root.findByProps({ testID: 'color-picker-preview' }).props.style,
+    ).backgroundColor,
+  ).toBe('#00FF00');
+  expect(color()).toBe('#ADD8E6');
+  await act(async () =>
+    rendered.root.findByProps({ label: 'Cancel' }).props.onPress(),
+  );
+  expect(color()).toBe('#ADD8E6');
+  expect(rendered.root.findAllByType(Modal)).toHaveLength(0);
+  await act(async () =>
+    rendered.root
+      .findByProps({ accessibilityLabel: 'Edit color 1' })
+      .props.onPress(),
+  );
+  for (const [channel, value] of [
+    ['Red', 18.4],
+    ['Green', 52],
+    ['Blue', 86],
+  ] as const) {
+    await act(async () =>
+      rendered.root
+        .findByProps({ accessibilityLabel: `${channel} channel` })
+        .props.onValueChange(value),
+    );
+  }
+  await act(async () =>
+    rendered.root.findByProps({ label: 'Done' }).props.onPress(),
+  );
+  expect(color()).toBe('#123456');
+  expect(current.config.customPalettes).toEqual([]);
+  expect(command.mock.calls.map(([op]) => op)).toEqual(['config', 'status']);
+  await act(async () =>
+    rendered.root.findByProps({ label: 'Add palette draft' }).props.onPress(),
+  );
+  expect(
+    rendered.root.findByProps({ testID: 'operation-status' }).props.children,
+  ).toContain('Use 1-32 ASCII characters for a name');
+  expect(
+    rendered.root.findAllByProps({ label: 'Edit Night' }),
+  ).toHaveLength(0);
+  await act(async () =>
+    rendered.root
+      .findByProps({ accessibilityLabel: 'Palette name' })
+      .props.onChangeText('Night'),
+  );
+  await act(async () =>
+    rendered.root.findByProps({ label: 'Add palette draft' }).props.onPress(),
+  );
+  expect(command.mock.calls.map(([op]) => op)).toEqual(['config', 'status']);
+  await act(async () =>
+    rendered.root.findByProps({ label: 'Preview' }).props.onPress(),
+  );
+  expect(current.config.customPalettes).toEqual([
+    expect.objectContaining({ name: 'Night', colors: ['#123456'] }),
+  ]);
+  expect(isConfig(current.config)).toBe(true);
+  expect(command.mock.calls.map(([op]) => op)).toEqual([
+    'config',
+    'status',
+    'config.set',
+  ]);
+  await act(async () =>
+    rendered.root.findByProps({ label: 'Edit Night' }).props.onPress(),
+  );
+  await act(async () =>
+    rendered.root
+      .findByProps({ accessibilityLabel: 'Edit color 1' })
+      .props.onPress(),
+  );
+  await act(async () =>
+    rendered.root
+      .findByProps({ accessibilityLabel: 'Blue channel' })
+      .props.onValueChange(255),
+  );
+  await act(async () =>
+    rendered.root.findByProps({ label: 'Done' }).props.onPress(),
+  );
+  expect(current.config.customPalettes[0].colors).toEqual(['#123456']);
+  await act(async () =>
+    rendered.root
+      .findByProps({ label: 'Update palette draft' })
+      .props.onPress(),
+  );
+  expect(command).toHaveBeenCalledTimes(3);
+  await act(async () =>
+    rendered.root.findByProps({ label: 'Save' }).props.onPress(),
+  );
+  expect(current.config.customPalettes[0].colors).toEqual(['#1234FF']);
+  expect(command.mock.calls.map(([op]) => op)).toEqual([
+    'config',
+    'status',
+    'config.set',
+    'config.set',
+    'config.save',
+  ]);
+  expect(
+    rendered.root.findByProps({ testID: 'operation-status' }).props.children,
+  ).toBe('Saved. No restart needed.');
+});
+test('adds a fifth chosen color, cancels additions and guards a sixth even if the disabled handler is invoked', async () => {
+  const current = configuration();
+  const colors = ['#112233', '#445566', '#778899', '#AABBCC'];
+  current.config.customPalettes = [
+    { id: 'porch', name: 'Porch', colors: [...colors] },
+  ];
+  const command = jest
+    .spyOn(PixiesClient.prototype, 'command')
+    .mockImplementation(async op =>
+      op === 'config'
+        ? current
+        : { ...healthFixture(), bootId: current.bootId },
+    );
+  await connectController();
+  await act(async () =>
+    rendered.root.findByProps({ label: 'Edit Porch' }).props.onPress(),
+  );
+  await act(async () =>
+    rendered.root.findByProps({ label: 'Add color' }).props.onPress(),
+  );
+  await act(async () =>
+    rendered.root.findByType(Modal).props.onRequestClose(),
+  );
+  expect(
+    rendered.root.findAllByProps({ accessibilityLabel: 'Edit color 5' }),
+  ).toHaveLength(0);
+  await act(async () =>
+    rendered.root.findByProps({ label: 'Add color' }).props.onPress(),
+  );
+  for (const channel of ['Red', 'Green', 'Blue']) {
+    await act(async () =>
+      rendered.root
+        .findByProps({ accessibilityLabel: `${channel} channel` })
+        .props.onValueChange(0),
+    );
+  }
+  await act(async () =>
+    rendered.root.findByProps({ label: 'Done' }).props.onPress(),
+  );
+  expect(
+    rendered.root.findByProps({ accessibilityLabel: 'Edit color 5' }).props
+      .accessibilityValue.text,
+  ).toBe('#000000');
+  expect(
+    rendered.root.findByProps({ label: 'Add color' }).props.disabled,
+  ).toBe(true);
+  await act(async () =>
+    rendered.root.findByProps({ label: 'Add color' }).props.onPress(),
+  );
+  expect(rendered.root.findAllByType(Modal)).toHaveLength(0);
+  expect(
+    rendered.root.findAllByProps({ accessibilityLabel: 'Edit color 6' }),
+  ).toHaveLength(0);
+  await act(async () =>
+    rendered.root.findByProps({ label: 'Remove color 2' }).props.onPress(),
+  );
+  expect(
+    rendered.root.findByProps({ accessibilityLabel: 'Edit color 2' }).props
+      .accessibilityValue.text,
+  ).toBe(colors[2]);
+  expect(
+    rendered.root.findByProps({ label: 'Add color' }).props.disabled,
+  ).toBe(false);
+  expect(current.config.customPalettes[0].colors).toEqual(colors);
+  expect(command.mock.calls.map(([op]) => op)).toEqual(['config', 'status']);
+});
+test('disconnecting closes the picker without applying or sending its unfinished color', async () => {
+  const current = configuration();
+  const command = jest
+    .spyOn(PixiesClient.prototype, 'command')
+    .mockImplementation(async op =>
+      op === 'config'
+        ? current
+        : { ...healthFixture(), bootId: current.bootId },
+    );
+  await connectController();
+  await act(async () =>
+    rendered.root
+      .findByProps({ accessibilityLabel: 'Edit color 1' })
+      .props.onPress(),
+  );
+  await act(async () =>
+    rendered.root
+      .findByProps({ accessibilityLabel: 'Red channel' })
+      .props.onValueChange(0),
+  );
+  mockConnect.mockRejectedValue(new Error('Bluetooth unavailable'));
+  await act(async () =>
+    mockConnect.mock.calls[0][1](new Error('Bluetooth disconnected')),
+  );
+  expect(rendered.root.findAllByType(Modal)).toHaveLength(0);
+  expect(
+    rendered.root.findByProps({ accessibilityLabel: 'Edit color 1' }).props,
+  ).toMatchObject({
+    disabled: true,
+    accessibilityValue: { text: '#ADD8E6' },
+  });
+  expect(command.mock.calls.map(([op]) => op)).toEqual(['config', 'status']);
+});
+test.each([6, 8])(
+  'preserves a legacy %s-color palette and blocks all outgoing lighting until explicit removals and draft update',
+  async size => {
+    const current = configuration();
+    const colors = [
+      '#112233',
+      '#445566',
+      '#778899',
+      '#AABBCC',
+      '#000000',
+      '#FFFFFF',
+      '#00FF00',
+      '#123456',
+    ].slice(0, size);
+    current.config.customPalettes = [
+      { id: 'legacy', name: 'Legacy', colors: [...colors] },
+    ];
+    const command = jest
+      .spyOn(PixiesClient.prototype, 'command')
+      .mockImplementation(async (op, args) => {
+        if (op === 'config') return current;
+        if (op === 'status')
+          return { ...healthFixture(), bootId: current.bootId };
+        if (op === 'config.set' && isConfig(args?.config)) {
+          return { ...current, config: args.config, revision: 2 };
+        }
+        throw new Error(`Unexpected operation: ${op}`);
+      });
+    await connectController();
+    expect(JSON.stringify(rendered.toJSON())).toContain(
+      'Saved colors have not been changed.',
+    );
+    for (const label of ['Preview', 'Save']) {
+      expect(rendered.root.findByProps({ label }).props.disabled).toBe(true);
+      await act(async () =>
+        rendered.root.findByProps({ label }).props.onPress(),
+      );
+      expect(
+        rendered.root.findByProps({ testID: 'operation-status' }).props
+          .children,
+      ).toContain('remove colors to 5 or fewer before Preview or Save');
+    }
+    await act(async () =>
+      rendered.root.findByProps({ label: 'Edit Legacy' }).props.onPress(),
+    );
+    expect(
+      colors.map(
+        (_, index) =>
+          rendered.root.findByProps({
+            accessibilityLabel: `Edit color ${index + 1}`,
+          }).props.accessibilityValue.text,
+      ),
+    ).toEqual(colors);
+    expect(
+      rendered.root.findByProps({ label: 'Add color' }).props.disabled,
+    ).toBe(true);
+    expect(
+      rendered.root.findByProps({ label: 'Update palette draft' }).props
+        .disabled,
+    ).toBe(true);
+    await act(async () =>
+      rendered.root
+        .findByProps({ label: 'Update palette draft' })
+        .props.onPress(),
+    );
+    expect(
+      rendered.root.findByProps({ testID: 'operation-status' }).props.children,
+    ).toContain('Remove colors to 5 or fewer');
+    for (let index = size; index > 5; index--) {
+      await act(async () =>
+        rendered.root
+          .findByProps({ label: `Remove color ${index}` })
+          .props.onPress(),
+      );
+    }
+    expect(
+      rendered.root.findByProps({ label: 'Preview' }).props.disabled,
+    ).toBe(true);
+    expect(current.config.customPalettes[0].colors).toEqual(colors);
+    expect(command.mock.calls.map(([op]) => op)).toEqual(['config', 'status']);
+    await act(async () =>
+      rendered.root
+        .findByProps({ label: 'Update palette draft' })
+        .props.onPress(),
+    );
+    expect(
+      rendered.root.findByProps({ label: 'Preview' }).props.disabled,
+    ).toBe(false);
+    expect(
+      rendered.root.findByProps({ label: 'Save' }).props.disabled,
+    ).toBe(false);
+    await act(async () =>
+      rendered.root.findByProps({ label: 'Preview' }).props.onPress(),
+    );
+    const sent = command.mock.calls.at(-1)?.[1]?.config;
+    expect(isConfig(sent)).toBe(true);
+    expect(sent).toMatchObject({
+      customPalettes: [
+        { id: 'legacy', name: 'Legacy', colors: colors.slice(0, 5) },
+      ],
+    });
+    expect(current.config.customPalettes[0].colors).toEqual(colors);
+  },
+);
 test('settings dismiss on outside tap and hardware Back; every page retains the same update component and lighting home', async () => {
   let back: () => boolean | null | undefined = () => false;
   jest
