@@ -7,6 +7,8 @@ protocol, or pin configuration was copied.
 | Component | Version used | License / source |
 |---|---|---|
 | NeoPixelBus | 2.8.4 | LGPL-3.0; [source and COPYING](https://github.com/Makuna/NeoPixelBus/tree/2.8.4) |
+| Adafruit NeoPixel (standalone diagnostics only) | 1.15.5 | LGPL-3.0; [source and license](https://github.com/adafruit/Adafruit_NeoPixel) |
+| FastLED (standalone diagnostics only) | 3.9.20 | MIT; [source and license](https://github.com/FastLED/FastLED) |
 | ArduinoJson | 6.21.5 | MIT; [source and license](https://github.com/bblanchon/ArduinoJson/tree/v6.21.5) |
 | NimBLE-Arduino | 2.5.1 | Apache-2.0; [source and license](https://github.com/h2zero/NimBLE-Arduino/tree/2.5.1) |
 | React / React Native | 19.2.3 / 0.84.1 | MIT; [React](https://github.com/facebook/react) and [React Native](https://github.com/facebook/react-native) |
