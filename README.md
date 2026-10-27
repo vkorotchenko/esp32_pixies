@@ -138,6 +138,147 @@ If only the first pixel responds, verify the data level and first pixel's output
 before treating a driver/profile change as a proven fix. Confirm the purchased
 voltage variant rather than relying on a listing that offers both 5V and 12V.
 
+### Standalone LED library comparison
+
+The opt-in diagnostic builds replace the app temporarily with an independent
+LED driver. They use GPIO4 and 50 RGB pixels, cycling dim red, green, blue and
+Off every four seconds. Each active channel is 16/255; no white
+test frame is sent. The tests neither read nor write saved settings, and they
+do not start Bluetooth or Wi-Fi. The phone app cannot connect during the test.
+
+A dim onboard RGB LED marks diagnostic startup: purple for Adafruit at 800kHz,
+cyan for FastLED at 800kHz, and yellow for Adafruit at 400kHz.
+It stays on during the external string's Off phase.
+It uses the board variant's physical `PIN_NEOPIXEL`:
+GPIO48 in the current profile. Confirm that pin against your actual carrier;
+the module designation alone does not identify its onboard LED wiring.
+
+The 400kHz test uses the low-speed timing in the
+[WS2811 datasheet](https://cdn-shop.adafruit.com/datasheets/WS2811.pdf):
+0-bit high/low times of 0.5/2.0us and 1-bit times of 1.2/1.3us. The chip's SET
+pin selects 400kHz when tied to VDD, or 800kHz when left floating. Selecting a
+test does not change that hardware connection. The onboard LED always uses
+800kHz, independently of the external string.
+
+Build the alternatives without flashing:
+
+```sh
+make diagnostic-adafruit
+make diagnostic-adafruit-400
+make diagnostic-fastled
+```
+
+After confirming the connected controller's USB port and hardware, upload one
+test at a time. Replace `/dev/cu.usbmodem2101` with its actual port:
+
+```sh
+pio run -e led_diag_adafruit -t upload --upload-port /dev/cu.usbmodem2101
+pio run -e led_diag_adafruit_400 -t upload --upload-port /dev/cu.usbmodem2101
+pio run -e led_diag_fastled -t upload --upload-port /dev/cu.usbmodem2101
+```
+
+The USB console at 115200 prints the library and each color phase. Observe one
+complete cycle before switching libraries; console progress alone does not
+prove that the pixels receive the signal. Disconnect power before changing
+wiring or extending the string. Software brightness limits do not protect
+against misdecoded data, wiring faults or an incorrect supply voltage.
+
+Restore the normal app without erasing NVS:
+
+```sh
+pio run -e esp32s3_n16r8 -t upload --upload-port /dev/cu.usbmodem2101
+```
+
+### Single-pixel sequential diagnostic
+
+Build the opt-in test without flashing:
+
+```sh
+make diagnostic-sequential
+```
+
+After independent review and controller/port verification, upload and monitor:
+
+```sh
+pio run -e led_diag_sequential -t upload --upload-port /dev/cu.usbmodem2101
+pio device monitor --port /dev/cu.usbmodem2101 --baud 115200
+```
+
+FastLED 3.9.20 drives GPIO4 with 50 RGB/WS2811 pixels at 800kHz. Exactly one
+external pixel is dim red `(16,0,0)` and all other 49 are black. It holds each
+position for 1000ms, walking 1 through 50, then wrapping to 1 continuously.
+There is no cumulative fill, white frame, or increase in channel level.
+This test does not configure an onboard indicator.
+
+The 115200-baud header identifies the library, GPIO, count, `pattern=single-red`,
+channel level and `holdMs=1000`. Each step prints `LED_SEQ position=1/50` through
+`LED_SEQ position=50/50`, followed by `LED_SEQ position=1/50` on wrap.
+The isolated environment leaves production defaults and existing diagnostics unchanged.
+It starts no Bluetooth/Wi-Fi and accesses no app settings. Like the static GPIO
+test below, its diagnostic-only `--wrap=nvs_flash_init` returns `ESP_OK`, bypassing
+Arduino's NVS initialization and erase-on-init-error recovery. Do not erase flash.
+
+One pixel at a time greatly reduces dynamic load. If the tail still fails,
+power distribution or a bad data path remains possible; this does not prove
+the absence of a power problem or identify a defective pixel.
+
+#### Compare with NeoPixelBus
+
+The third-library variant uses NeoPixelBus 2.8.4, not FastLED, with explicit
+`NeoRgbFeature` RGB order and the ESP32-S3-supported `NeoEsp32Rmt0Ws2811Method`
+(RMT channel 0, WS2811 at nominal 800kHz). It keeps the same GPIO4, 50-pixel,
+single-red `(16,0,0)` walk, 1000ms hold, position output and diagnostic-only NVS
+bypass. Its 115200-baud header identifies NeoPixelBus and the RMT method.
+
+Build without flashing, then upload only after independent review and
+controller/port verification:
+
+```sh
+make diagnostic-sequential-neopixelbus
+pio run -e led_diag_sequential_neopixelbus -t upload --upload-port /dev/cu.usbmodem2101
+```
+
+Use the same monitor command above and observe positions 1 through 50, then 1.
+The existing FastLED sequential environment remains `led_diag_sequential`.
+
+### GPIO4 static-voltage diagnostic
+
+This opt-in test starts explicitly LOW, then repeats GPIO4 HIGH for 5000ms and
+LOW for 5000ms indefinitely. It uses only Arduino GPIO calls, with no pixel
+libraries, embedded web assets, Wi-Fi/BLE, or NVS reads/writes. The normal app
+is unavailable during the test; production build defaults remain unchanged.
+
+For this diagnostic only, `--wrap=nvs_flash_init` redirects Arduino startup's
+NVS initialization to a no-op returning `ESP_OK`. The installed Arduino core
+has no NVS-only skip-init setting; returning success also bypasses its
+NVS-error recovery branch, which could otherwise erase the NVS partition.
+The framework and normal app startup are not modified. Recheck the linked
+startup path if the framework is upgraded.
+
+Build only:
+
+```sh
+make diagnostic-gpio4
+```
+
+After confirming the controller and port, upload without erasing flash/NVS and
+monitor at 115200 (replace the port if needed):
+
+```sh
+pio run -e gpio4_diag_static -t upload --upload-port /dev/cu.usbmodem2101
+pio device monitor --port /dev/cu.usbmodem2101 --baud 115200
+```
+
+Each transition prints `GPIO4_DIAG t_ms=...; GPIO4=HIGH` (or `LOW`) and
+`phase_ms=5000`. With GPIO4 connected to LV1, converter LV powered at 3.3V,
+HV at 5V, and common ground, measure **signal channels**, not LV/HV supply rails,
+relative to ESP GND: LOW should be approximately 0V on both LV1 and HV1; HIGH
+should be approximately 3.3V on LV1 and 5V on HV1.
+**GPIO4 is a 3.3V output only: never apply 5V to GPIO4.**
+Disconnect power before changing wiring. This is a static path test, not proof
+of WS2811 waveform timing. Restore the normal app with the command above,
+without erasing NVS.
+
 ## First boot and offline operation
 
 1. With verified hardware, upload the Bluetooth-enabled firmware once over USB.
