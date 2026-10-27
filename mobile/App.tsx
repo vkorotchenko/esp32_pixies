@@ -4,6 +4,7 @@ import {
   AppState,
   BackHandler,
   Linking,
+  Modal,
   Pressable,
   ScrollView,
   StatusBar,
@@ -41,6 +42,7 @@ import {
   WifiNetwork,
   wifiScan,
 } from './src/model';
+const MAX_PALETTE_COLORS = 5;
 const PRESETS: Palette[] = [
   {
     id: 'builtin:light-blue',
@@ -171,7 +173,11 @@ function Controller() {
   const [networks, setNetworks] = useState<WifiNetwork[]>([]);
   const [paletteId, setPaletteId] = useState<string | null>(null);
   const [paletteName, setPaletteName] = useState('');
-  const [paletteColors, setPaletteColors] = useState('#ADD8E6');
+  const [paletteColors, setPaletteColors] = useState(['#ADD8E6']);
+  const [colorPicker, setColorPicker] = useState<{
+    index: number;
+    color: string;
+  } | null>(null);
   useEffect(() => {
     const listener = BackHandler.addEventListener('hardwareBackPress', () => {
       if (menuOpen) {
@@ -303,6 +309,7 @@ function Controller() {
         String(lastRead.current?.config.ledCount ?? DEFAULT_LIGHTS.ledCount),
       );
       setMessage('');
+      setColorPicker(null);
       setPassword('');
       setWebsitePassword('');
     }
@@ -322,6 +329,7 @@ function Controller() {
         client.current = null;
         connectedRef.current = false;
         setConnected(null);
+        setColorPicker(null);
         setDraft(lastRead.current?.config ?? DEFAULT_LIGHTS);
         setCount(
           String(lastRead.current?.config.ledCount ?? DEFAULT_LIGHTS.ledCount),
@@ -491,6 +499,11 @@ function Controller() {
         'Check the LED count, controls, and custom palette limits.',
       );
     }
+    if (value.customPalettes.some(p => p.colors.length > MAX_PALETTE_COLORS)) {
+      throw new Error(
+        'Custom palettes have more than 5 colors. Edit them and remove colors to 5 or fewer before Preview or Save. Saved colors have not been changed.',
+      );
+    }
     return value;
   }
   async function preview(save: boolean) {
@@ -613,17 +626,22 @@ function Controller() {
   function editPalette(palette: Palette) {
     setPaletteId(palette.id);
     setPaletteName(palette.name);
-    setPaletteColors(palette.colors.join(', '));
+    setPaletteColors([...palette.colors]);
+    setColorPicker(null);
   }
   function keepPalette() {
-    if (!draft) {
+    if (blocked || colorPicker) {
+      return;
+    }
+    if (paletteColors.length > MAX_PALETTE_COLORS) {
+      setMessage('Remove colors to 5 or fewer, then update the palette draft.');
       return;
     }
     const id = paletteId || `palette-${Date.now().toString(36)}`;
     const palette = {
       id,
       name: paletteName,
-      colors: paletteColors.split(',').map(c => c.trim().toUpperCase()),
+      colors: paletteColors,
     };
     const current = draft.customPalettes.filter(p => p.id !== id);
     const next = {
@@ -633,19 +651,23 @@ function Controller() {
     };
     if (!isConfig(next)) {
       setMessage(
-        'Use 1-32 ASCII characters for a name, 1-8 RGB hex colors, and at most 10 palettes.',
+        'Use 1-32 ASCII characters for a name, 1-5 colors, and at most 10 palettes.',
       );
       return;
     }
     setDraft(next);
     setPaletteId(null);
     setPaletteName('');
-    setPaletteColors('#ADD8E6');
+    setPaletteColors(['#ADD8E6']);
     setMessage(
       'Palette added to your draft. Preview or Save to send it to the ESP.',
     );
   }
   const blocked = busy || !connected || deviceStatus?.update.busy === true;
+  const oversizedPalettes = draft.customPalettes.filter(
+    p => p.colors.length > MAX_PALETTE_COLORS,
+  );
+  const paletteBlocked = blocked || colorPicker !== null;
   const hasEdits =
     draft &&
     state &&
@@ -752,15 +774,23 @@ function Controller() {
           count={estimateCount}
           brightness={draft.brightness}
         />
+        {oversizedPalettes.length > 0 && (
+          <Text accessibilityRole="alert" style={styles.text}>
+            {oversizedPalettes.map(p => p.name).join(', ')}: more than 5 colors.
+            Saved colors have not been changed. Edit these palettes and remove
+            colors to 5 or fewer, then update each palette draft before Preview
+            or Save.
+          </Text>
+        )}
         <View style={styles.row}>
           <Button
             label="Preview"
-            disabled={blocked}
+            disabled={paletteBlocked || oversizedPalettes.length > 0}
             onPress={() => run(() => preview(false))}
           />
           <Button
             label="Save"
-            disabled={blocked}
+            disabled={paletteBlocked || oversizedPalettes.length > 0}
             onPress={() => run(() => preview(true), 'Saving...')}
           />
           <Button
@@ -784,12 +814,12 @@ function Controller() {
           <View key={p.id} style={styles.row}>
             <Button
               label={`Edit ${p.name}`}
-              disabled={blocked}
+              disabled={paletteBlocked}
               onPress={() => editPalette(p)}
             />
             <Button
               label={`Delete ${p.name}`}
-              disabled={blocked}
+              disabled={paletteBlocked}
               onPress={() =>
                 setDraft({
                   ...draft,
@@ -810,24 +840,77 @@ function Controller() {
         <Input
           accessibilityLabel="Palette name"
           placeholder="Palette name"
-          editable={!blocked}
+          editable={!paletteBlocked}
           maxLength={32}
           value={paletteName}
           onChangeText={setPaletteName}
         />
-        <Input
-          accessibilityLabel="Palette colors"
-          placeholder="#ADD8E6, #FFFFFF"
-          editable={!blocked}
-          value={paletteColors}
-          onChangeText={setPaletteColors}
-        />
         <Text style={styles.text}>
-          Enter 1-8 six-digit RGB colors, separated by commas.
+          {paletteColors.length}/{MAX_PALETTE_COLORS} colors. Tap a color to
+          choose it. Keep at least one color.
         </Text>
+        {paletteColors.length > MAX_PALETTE_COLORS && (
+          <Text accessibilityRole="alert" style={styles.text}>
+            All existing colors are shown. Remove colors to 5 or fewer to
+            update this palette draft; nothing is removed automatically.
+          </Text>
+        )}
+        {paletteColors.map((color, index) => (
+          <View key={index} style={styles.row}>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={`Edit color ${index + 1}`}
+              accessibilityValue={{ text: color }}
+              accessibilityState={{
+                disabled: paletteBlocked,
+                selected: colorPicker?.index === index,
+              }}
+              disabled={paletteBlocked}
+              onPress={() => {
+                if (!paletteBlocked) setColorPicker({ index, color });
+              }}
+              style={[
+                styles.button,
+                styles.colorButton,
+                colorPicker?.index === index && styles.selected,
+                paletteBlocked && styles.disabled,
+              ]}
+            >
+              <View style={[styles.swatch, { backgroundColor: color }]} />
+              <Text style={styles.buttonText}>Color {index + 1}</Text>
+            </Pressable>
+            <Button
+              label={`Remove color ${index + 1}`}
+              disabled={paletteBlocked || paletteColors.length <= 1}
+              onPress={() => {
+                if (!paletteBlocked && paletteColors.length > 1) {
+                  setPaletteColors(colors =>
+                    colors.filter((_, i) => i !== index),
+                  );
+                }
+              }}
+            />
+          </View>
+        ))}
+        <Button
+          label="Add color"
+          disabled={
+            paletteBlocked || paletteColors.length >= MAX_PALETTE_COLORS
+          }
+          onPress={() => {
+            if (!paletteBlocked && paletteColors.length < MAX_PALETTE_COLORS) {
+              setColorPicker({
+                index: paletteColors.length,
+                color: '#ADD8E6',
+              });
+            }
+          }}
+        />
         <Button
           label={paletteId ? 'Update palette draft' : 'Add palette draft'}
-          disabled={blocked}
+          disabled={
+            paletteBlocked || paletteColors.length > MAX_PALETTE_COLORS
+          }
           onPress={keepPalette}
         />
       </Card>
@@ -1293,6 +1376,109 @@ function Controller() {
           </ScrollView>
         </View>
       </View>
+      {colorPicker && (
+        <Modal transparent onRequestClose={() => setColorPicker(null)}>
+          <View style={styles.pickerOverlay}>
+            <SafeAreaView
+              style={styles.pickerSheet}
+              accessibilityViewIsModal
+              onAccessibilityEscape={() => setColorPicker(null)}
+            >
+              <ScrollView contentContainerStyle={styles.card}>
+                <Text accessibilityRole="header" style={styles.title}>
+                  {colorPicker.index === paletteColors.length
+                    ? 'Add color'
+                    : `Edit color ${colorPicker.index + 1}`}
+                </Text>
+                <View
+                  testID="color-picker-preview"
+                  accessible
+                  accessibilityLabel={`Selected color ${colorPicker.color}`}
+                  style={[
+                    styles.colorPreview,
+                    { backgroundColor: colorPicker.color },
+                  ]}
+                />
+                <Text style={styles.text}>{colorPicker.color}</Text>
+                {(['Red', 'Green', 'Blue'] as const).map((channel, index) => {
+                  const offset = 1 + index * 2;
+                  const value = parseInt(
+                    colorPicker.color.slice(offset, offset + 2),
+                    16,
+                  );
+                  return (
+                    <View key={channel}>
+                      <Text style={styles.label}>
+                        {channel}: {value}
+                      </Text>
+                      <Slider
+                        accessibilityLabel={`${channel} channel`}
+                        accessibilityValue={{ min: 0, max: 255, now: value }}
+                        disabled={blocked}
+                        minimumValue={0}
+                        maximumValue={255}
+                        step={1}
+                        value={value}
+                        minimumTrackTintColor={
+                          ['#f87171', '#4ade80', '#60a5fa'][index]
+                        }
+                        maximumTrackTintColor="#475569"
+                        style={styles.colorSlider}
+                        onValueChange={next => {
+                          if (blocked) return;
+                          setColorPicker(current =>
+                            current
+                              ? {
+                                  ...current,
+                                  color:
+                                    current.color.slice(0, offset) +
+                                    Math.round(next)
+                                      .toString(16)
+                                      .padStart(2, '0')
+                                      .toUpperCase() +
+                                    current.color.slice(offset + 2),
+                                }
+                              : null,
+                          );
+                        }}
+                      />
+                    </View>
+                  );
+                })}
+                <Text style={styles.text}>
+                  Done changes only this palette editor. Update the palette
+                  draft, then Preview or Save to send it to the ESP.
+                </Text>
+                <View style={styles.row}>
+                  <Button
+                    label="Done"
+                    disabled={blocked}
+                    onPress={() => {
+                      if (blocked) return;
+                      setPaletteColors(colors =>
+                        colorPicker.index < colors.length
+                          ? colors.map((color, index) =>
+                              index === colorPicker.index
+                                ? colorPicker.color
+                                : color,
+                            )
+                          : colors.length < MAX_PALETTE_COLORS
+                          ? [...colors, colorPicker.color]
+                          : colors,
+                      );
+                      setColorPicker(null);
+                    }}
+                  />
+                  <Button
+                    label="Cancel"
+                    onPress={() => setColorPicker(null)}
+                  />
+                </View>
+              </ScrollView>
+            </SafeAreaView>
+          </View>
+        </Modal>
+      )}
     </SafeAreaView>
   );
 }
@@ -1403,6 +1589,28 @@ const styles = StyleSheet.create({
     gap: 8,
     alignItems: 'center',
   },
+  colorButton: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  swatch: {
+    width: 28,
+    height: 28,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#94a3b8',
+  },
+  colorPreview: {
+    height: 72,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#94a3b8',
+  },
+  colorSlider: { height: 48 },
+  pickerOverlay: {
+    flex: 1,
+    justifyContent: 'center',
+    padding: 20,
+    backgroundColor: 'rgba(0,0,0,0.7)',
+  },
+  pickerSheet: { maxHeight: '100%' },
   button: {
     minHeight: 46,
     paddingHorizontal: 16,

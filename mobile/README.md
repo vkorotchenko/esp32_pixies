@@ -70,6 +70,21 @@ release, a pending APK installation, or a failed check/update. No published
 release is an informational state, not an update alert. Checks never lock the
 lighting controls. Both warning badges have accessible attention labels.
 
+### Custom palettes
+
+Each mobile palette has **1–5 colors**, with up to 10 custom palettes.
+Tap a color swatch or **Add color** to choose any RGB color with the Red, Green,
+and Blue sliders and live preview. **Done** applies it only to the palette editor;
+**Cancel** (or Android Back) discards that picker change, including a new color.
+Use **Add palette draft** or **Update palette draft**, then explicitly **Preview**
+(RAM only) or **Save** (persistent) to send changes to the controller. Moving
+the picker sliders never sends lighting commands.
+
+Existing controller palettes with 6–8 colors load without losing any colors.
+The app warns and blocks Preview/Save until you explicitly remove colors to
+five or fewer in each oversized palette and update its draft (or delete that
+palette). Nothing on the controller changes until Preview/Save.
+
 ### Power settings and warnings
 
 In **Settings → Device settings**, enter the actual 5 V supply rating and watts
