@@ -5,6 +5,88 @@ is served by the device at `/`, `/app.js`, `/styles.css`; all three assets are
 inside the application image. Use relative URLs, same-origin HTTP, and no CDN.
 `config.schema.json` describes the complete lighting object.
 
+## Weekly scheduling
+
+This optional feature advertises `status.capabilities.weeklySchedule: 1`.
+It does not add fields to the strict lighting configuration. The website has
+no schedule editor; the mobile **Lights | Schedule** tabs provide the editor.
+
+| Route | Exact JSON body | Authorization |
+|---|---|---|
+| `GET /api/schedule` | none | Existing trusted local-network read gate |
+| `PUT /api/schedule` | `{bootId,baseRevision,schedule}` | Admin session, CSRF, same-origin request gate |
+| `POST /api/time/sync` | `{bootId,utcSeconds}` | Admin session, CSRF, same-origin request gate |
+| `PUT /api/lights` | `{bootId,baseRevision,on}` | Existing lighting trusted-LAN mutation gate |
+| `POST /api/schedule/resume` | `{bootId}` | Admin session, CSRF, same-origin request gate |
+
+All mutations reject OTA/restart busy state. A wrong boot ID returns
+`409 boot_conflict`; stale revisions return `409 revision_conflict`.
+Schedule Save uses its own revision; lights.set uses the lighting revision.
+Unknown fields, incomplete objects, coercions, embedded NULs and invalid
+timezone/minute bounds are rejected. Schedule commands/results have a 4096-byte
+bound; the transport still allows 8192 bytes for other operations.
+
+Schedule GET, Save, sync and resume return
+`{bootId,revision,schedule,runtime}`. The complete saved object follows
+[schedule.schema.json](schedule.schema.json): version 1, global enable, a nullable
+timezone, and exactly seven Monday–Sunday rows, each with `enabled`,
+`onMinute` and `offMinute` (0–1439). Enabled schedules require timezone rules.
+Each enabled row must have different ON/OFF minutes.
+
+The timezone contains a named ASCII ID (1–64 bytes), UTC coverage
+`[fromUtc,untilUtc)`, initial signed seconds **east of UTC**, and at most
+16 strictly ordered transitions strictly inside coverage. UTC values stay
+within 2020–2037. The phone exports two calendar years of its actual named-zone
+rules plus three days of lookback using Temporal and host Intl data.
+It never invents fixed-offset DST rules. Traveling does not replace the saved
+controller zone: **Use phone timezone**, then **Save schedule**, explicitly
+changes or refreshes it. Coverage is not a promise against future timezone-law
+changes; refresh after a law change and before expiry.
+
+ON is inclusive; OFF is exclusive. OFF before ON ends the following calendar
+day, including Sunday into Monday. A disabled day starts no interval but does
+not cut off a previous overnight interval. Intervals form a union: overlapping
+internal endpoints do not toggle output or expire manual overrides. Equal
+enabled endpoints are invalid, not 24-hour operation. An enabled schedule with
+all days disabled is OFF. DST gaps clamp missing endpoints to the first valid
+instant and discard resulting zero-length intervals; folds use earliest ON
+and latest OFF, continuously through the repeated period.
+
+`runtime` (also compact `status.scheduling`, without the saved table) contains:
+
+- `enabled`, `healthy`, `recovery`, `automaticOn`, `effectiveOn`, `pauseReason`;
+- `overrideActive`, `overrideOn`, nullable `overrideUntilUtc`;
+- nullable `nextBoundaryUtc`, `timezoneId`, `ruleExpiryUtc`;
+- `clock: {synced,utcSeconds,source,syncAgeSeconds}`. Unsynced UTC/age are null.
+
+Every boot starts UNSYNCED. Fresh phone UTC or asynchronous Wi-Fi SNTP establishes
+time; elapsed animation/timeouts remain monotonic. Clock state is not persisted.
+A powered controller retains time across loss of phone/Wi-Fi. Offline cold boot
+needs a phone connection or configured Wi-Fi/NTP; there is no battery-backed RTC.
+Enabled automation is OFF while unsynced or outside timezone coverage, with a
+visible pause reason. Corrupt/unavailable schedule storage pauses automation
+visibly but leaves manual controls available.
+
+Explicit `lights.set` arms a RAM override even when the requested ON value
+equals the stored manual intent but differs from effective scheduled output.
+It changes the normal lighting revision without saving lighting or schedule.
+The override ends at the next **effective** state boundary. Forward clock jumps
+expire crossed boundaries; backward corrections recompute the future boundary.
+Manual actions made before sync survive initial sync until that boundary.
+Without a future boundary the override remains until Resume, schedule Save,
+or reboot. Disabling/saving the schedule clears override and disabling returns
+to ordinary manual intent. Legacy `config.set` arms override only when ON changes;
+palette-only edits and `config.save` do not.
+
+Schedule Save checks the separate CRC/versioned `px-settings/schedule` record
+and readback before activation. A failed Save leaves the prior live schedule.
+Lighting saves do not migrate or replace scheduling. Missing schedule storage
+means disabled legacy behavior; factory reset clears and verifies this key.
+Ticks, automatic boundaries and clock synchronization never write NVS or change
+lighting settings, dirty flags or revisions. Rendering uses effective ON while
+retaining power limiting and OTA blanking. Reboot, missed ticks and clock
+corrections evaluate current state without replaying historical events.
+
 ## Transport and security headers
 
 Every **POST or PUT**, including login, claim and ordinary lighting controls:

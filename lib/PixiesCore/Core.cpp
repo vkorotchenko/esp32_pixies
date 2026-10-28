@@ -103,6 +103,9 @@ uint32_t powerBudgetMa(const PowerSettings& s,uint32_t hardwareBudgetMa) {
   return supply<hardwareBudgetMa ? supply : hardwareBudgetMa;
 }
 Power render(const Settings& s,uint64_t ms,Rgb* out,size_t count,uint32_t budget,uint16_t ledMilliWatts) {
+  return render(s,s.on,ms,out,count,budget,ledMilliWatts);
+}
+Power render(const Settings& s,bool effectiveOn,uint64_t ms,Rgb* out,size_t count,uint32_t budget,uint16_t ledMilliWatts) {
   Power p;
   if (!out || !count || count>kMaxLeds) return p;
   const Palette* pal = selectedPalette(s);
@@ -111,7 +114,7 @@ Power render(const Settings& s,uint64_t ms,Rgb* out,size_t count,uint32_t budget
   uint64_t sum = 0;
   for (size_t i=0; i<count; ++i) {
     size_t color = i%pal->count;
-    uint32_t level = s.on ? 255 : 0;
+    uint32_t level = effectiveOn ? 255 : 0;
     const uint32_t seed=hash(uint32_t(i)+0x1234567U);
     switch (s.effect) {
       case Effect::Steady: break;

@@ -63,7 +63,8 @@ class NimBLEServer {
   bool start() { return true; }
   void disconnect(uint16_t handle) { disconnected.push_back(handle); }
   void disconnect(const NimBLEConnInfo& info) { disconnect(info.getConnHandle()); }
-  uint16_t getPeerMTU(uint16_t) const { return 247; }
+  uint16_t peerMtu=247;
+  uint16_t getPeerMTU(uint16_t) const { return peerMtu; }
 };
 class NimBLEAdvertisementData {
  public:

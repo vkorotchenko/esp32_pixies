@@ -25,6 +25,8 @@ import {
 } from './src/controllerPreference';
 import { UpdatePanel } from './src/UpdatePanel';
 import { PowerNotice, PowerSettings } from './src/PowerSettings';
+import { ScheduleScreen } from './src/ScheduleScreen';
+import { ScheduleResponse, ScheduleV1, sameSchedule } from './src/schedule';
 import { DEFAULT_LIGHTS, sliderCount } from './src/power';
 import { checkCanceled } from './src/updates';
 import {
@@ -143,6 +145,10 @@ function Controller() {
   const updating = useRef(false);
   const mounted = useRef(false);
   const foreground = useRef(AppState.currentState !== 'background');
+  const scheduleActive = useRef(
+    AppState.currentState === null || AppState.currentState === 'active',
+  );
+  const scheduleReadEpoch = useRef(0);
   const connectedRef = useRef(false);
   const paused = useRef(false);
   const autoRequested = useRef(false);
@@ -161,10 +167,14 @@ function Controller() {
   const [updateAttention, setUpdateAttention] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [tab, setTab] = useState<
-    'Lights' | 'Connection' | 'Updates' | 'Wi-Fi' | 'Device'
+    'Lights' | 'Schedule' | 'Connection' | 'Updates' | 'Wi-Fi' | 'Device'
   >('Lights');
   const [state, setState] = useState<Snapshot | null>(null);
   const [deviceStatus, setDeviceStatus] = useState<Status | null>(null);
+  const [scheduleState, setScheduleState] = useState<ScheduleResponse | null>(
+    null,
+  );
+  const [scheduleError, setScheduleError] = useState('');
   const [draft, setDraft] = useState<Config>(DEFAULT_LIGHTS);
   const [count, setCount] = useState(String(DEFAULT_LIGHTS.ledCount));
   const [ssid, setSsid] = useState('');
@@ -194,12 +204,16 @@ function Controller() {
   }, [menuOpen, tab]);
   useEffect(() => {
     mounted.current = true;
+    const scheduleReads = scheduleReadEpoch;
     const request = () => {
       autoRequested.current = true;
       automaticConnection.current();
     };
     const stopWatching = bluetooth.onPoweredOn(request);
     const listener = AppState.addEventListener('change', next => {
+      const wasActive = scheduleActive.current;
+      scheduleActive.current = next === 'active';
+      if (!scheduleActive.current) scheduleReadEpoch.current++;
       if (next === 'background') {
         foreground.current = false;
         connectionAttempt.current?.abort();
@@ -207,11 +221,14 @@ function Controller() {
         foreground.current = true;
         paused.current = false;
         request();
+      } else if (next === 'active' && !wasActive && connectedRef.current) {
+        request();
       }
     });
     request();
     return () => {
       mounted.current = false;
+      scheduleReads.current++;
       connectionAttempt.current?.abort();
       stopWatching();
       listener.remove();
@@ -221,12 +238,12 @@ function Controller() {
         .catch(error => console.warn('Bluetooth cleanup failed:', error));
     };
   }, [bluetooth]);
-  async function run(
-    work: () => Promise<unknown>,
+  async function run<T,>(
+    work: () => Promise<T>,
     progressMessage = '',
     connection = false,
   ) {
-    if (working.current) {
+    if (!mounted.current || working.current) {
       return;
     }
     working.current = true;
@@ -237,7 +254,7 @@ function Controller() {
       setConnectionError(false);
     }
     try {
-      await work();
+      return await work();
     } catch (error) {
       if (mounted.current) {
         report(
@@ -298,12 +315,122 @@ function Controller() {
     setDeviceStatus(health);
     return health;
   }
+  async function loadSchedule(sync = false, bootId = lastRead.current?.bootId) {
+    if (
+      !mounted.current ||
+      !connectedRef.current ||
+      !scheduleActive.current
+    )
+      return;
+    if (!bootId) throw new Error('Reload the controller first.');
+    const source = api();
+    const epoch = scheduleReadEpoch.current;
+    const value = sync
+      ? await source.syncClock(bootId, Math.floor(Date.now() / 1000))
+      : await source.getSchedule();
+    if (
+      !mounted.current ||
+      !connectedRef.current ||
+      !scheduleActive.current ||
+      client.current !== source ||
+      scheduleReadEpoch.current !== epoch
+    )
+      return;
+    if (value.bootId !== bootId)
+      throw new Error('Controller restarted. Reconnect before scheduling.');
+    setScheduleState(value);
+    setScheduleError('');
+    setDeviceStatus(previous =>
+      previous ? { ...previous, scheduling: value.runtime } : previous,
+    );
+    return value;
+  }
+  async function scheduleWork<T,>(work: () => Promise<T>) {
+    const source = client.current;
+    const epoch = scheduleReadEpoch.current;
+    try {
+      return await work();
+    } catch (error) {
+      if (
+        !mounted.current ||
+        !connectedRef.current ||
+        !scheduleActive.current ||
+        client.current !== source ||
+        scheduleReadEpoch.current !== epoch
+      )
+        return;
+      setScheduleError(
+        error instanceof Error
+          ? error.message
+          : 'Schedule operation failed. Reload before retrying.',
+      );
+    }
+  }
+  async function saveSchedule(
+    value: ScheduleV1,
+    base: Pick<ScheduleResponse, 'bootId' | 'revision'>,
+  ) {
+    if (
+      !scheduleState ||
+      base.bootId !== scheduleState.bootId ||
+      base.revision !== scheduleState.revision
+    )
+      throw new Error('Schedule changed. Reload saved values before saving.');
+    const source = api();
+    const saved = await source.saveSchedule(base.bootId, base.revision, value);
+    if (!mounted.current || !connectedRef.current || client.current !== source)
+      return;
+    if (
+      saved.bootId !== base.bootId ||
+      saved.revision !== base.revision + 1 ||
+      !sameSchedule(saved.schedule, value)
+    ) {
+      throw new Error(
+        'Schedule save is not confirmed. Reload before retrying.',
+      );
+    }
+    setScheduleState(saved);
+    setScheduleError('Schedule saved on controller. No restart needed.');
+    return saved;
+  }
+  async function manualLights(on: boolean) {
+    const previous = lastRead.current;
+    if (!previous) throw new Error('Reload lighting first.');
+    const source = api();
+    const next = snapshot(
+      await source.command('lights.set', {
+        bootId: previous.bootId,
+        baseRevision: previous.revision,
+        on,
+      }),
+    );
+    if (!mounted.current || !connectedRef.current || client.current !== source)
+      return;
+    if (
+      next.bootId !== previous.bootId ||
+      next.revision !== previous.revision + 1 ||
+      next.config.on !== on
+    )
+      throw new Error('Manual action is not confirmed. Reload lighting.');
+    lastRead.current = next;
+    setState(next);
+    setDraft(value => ({ ...value, on }));
+    setScheduleState(value =>
+      value?.bootId === next.bootId
+        ? { ...value, runtime: { ...value.runtime, effectiveOn: on } }
+        : value,
+    );
+    await scheduleWork(() => loadSchedule());
+  }
   async function disconnect() {
+    scheduleReadEpoch.current++;
     connectedRef.current = false;
     client.current?.close();
     client.current = null;
     if (mounted.current) {
       setConnected(null);
+      setScheduleState(null);
+      setScheduleError('');
       setDraft(lastRead.current?.config ?? DEFAULT_LIGHTS);
       setCount(
         String(lastRead.current?.config.ledCount ?? DEFAULT_LIGHTS.ledCount),
@@ -325,10 +452,12 @@ function Controller() {
           return;
         }
         const wasConnected = connectedRef.current;
+        scheduleReadEpoch.current++;
         client.current?.close();
         client.current = null;
         connectedRef.current = false;
         setConnected(null);
+        setScheduleState(null);
         setColorPicker(null);
         setDraft(lastRead.current?.config ?? DEFAULT_LIGHTS);
         setCount(
@@ -353,12 +482,18 @@ function Controller() {
       if (signal?.aborted) {
         throw new Error('Bluetooth connection attempt canceled.');
       }
-      await load();
+      const health = await load();
       if (signal?.aborted || !mounted.current) {
         throw new Error('Bluetooth connection attempt canceled.');
       }
       connectedRef.current = true;
       setConnected(device.name);
+      if (health.capabilities?.weeklySchedule === 1) {
+        await scheduleWork(() => loadSchedule(true, health.bootId));
+      }
+      if (signal?.aborted || !mounted.current) {
+        throw new Error('Bluetooth connection attempt canceled.');
+      }
     } catch (error) {
       await disconnect();
       throw error;
@@ -461,7 +596,17 @@ function Controller() {
   }
   automaticConnection.current = async () => {
     if (connectedRef.current) {
+      if (
+        working.current ||
+        updating.current ||
+        !foreground.current ||
+        !scheduleActive.current
+      )
+        return;
       autoRequested.current = false;
+      if (deviceStatus?.capabilities?.weeklySchedule === 1) {
+        await run(() => scheduleWork(() => loadSchedule(true)));
+      }
       return;
     }
     if (
@@ -486,6 +631,40 @@ function Controller() {
       }
     }, 'Connecting automatically...');
   };
+  useEffect(() => {
+    if (
+      (tab !== 'Schedule' && tab !== 'Lights') ||
+      !connected ||
+      deviceStatus?.capabilities?.weeklySchedule !== 1 ||
+      deviceStatus.update.busy
+    )
+      return;
+    const scheduleReads = scheduleReadEpoch;
+    const refresh = () => {
+      if (
+        mounted.current &&
+        connectedRef.current &&
+        !working.current &&
+        !updating.current &&
+        scheduleActive.current
+      ) {
+        run(() => scheduleWork(() => loadSchedule()));
+      }
+    };
+    refresh();
+    const timer = setInterval(refresh, 15000);
+    return () => {
+      clearInterval(timer);
+      scheduleReads.current++;
+    };
+    // The timer reads the current client and authoritative boot through refs.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    tab,
+    connected,
+    deviceStatus?.capabilities?.weeklySchedule,
+    deviceStatus?.update.busy,
+  ]);
   function candidate(): Config {
     if (!draft || !/^\d{1,4}$/.test(count)) {
       throw new Error('Enter a whole LED count from 1 to 1000.');
@@ -685,8 +864,16 @@ function Controller() {
           <Switch
             accessibilityLabel="Lights on"
             disabled={blocked}
-            value={draft.on}
-            onValueChange={on => setDraft({ ...draft, on })}
+            value={
+              deviceStatus?.capabilities?.weeklySchedule === 1
+                ? scheduleState?.runtime.effectiveOn ?? draft.on
+                : draft.on
+            }
+            onValueChange={on => {
+              if (deviceStatus?.capabilities?.weeklySchedule === 1)
+                run(() => manualLights(on));
+              else setDraft({ ...draft, on });
+            }}
           />
         </View>
         <Text style={styles.text}>
@@ -851,8 +1038,8 @@ function Controller() {
         </Text>
         {paletteColors.length > MAX_PALETTE_COLORS && (
           <Text accessibilityRole="alert" style={styles.text}>
-            All existing colors are shown. Remove colors to 5 or fewer to
-            update this palette draft; nothing is removed automatically.
+            All existing colors are shown. Remove colors to 5 or fewer to update
+            this palette draft; nothing is removed automatically.
           </Text>
         )}
         {paletteColors.map((color, index) => (
@@ -908,9 +1095,7 @@ function Controller() {
         />
         <Button
           label={paletteId ? 'Update palette draft' : 'Add palette draft'}
-          disabled={
-            paletteBlocked || paletteColors.length > MAX_PALETTE_COLORS
-          }
+          disabled={paletteBlocked || paletteColors.length > MAX_PALETTE_COLORS}
           onPress={keepPalette}
         />
       </Card>
@@ -988,6 +1173,20 @@ function Controller() {
           onPress={() => setMenuOpen(false)}
         />
       )}
+      <View style={styles.row}>
+        {(['Lights', 'Schedule'] as const).map(name => (
+          <Button
+            key={name}
+            label={name}
+            role="tab"
+            selected={tab === name}
+            onPress={() => {
+              setTab(name);
+              setMenuOpen(false);
+            }}
+          />
+        ))}
+      </View>
       <View style={styles.body}>
         <ScrollView
           testID="lighting-home"
@@ -1021,12 +1220,48 @@ function Controller() {
           {lighting}
         </ScrollView>
         <View
-          testID="settings-panel"
-          style={[styles.settingsPanel, tab === 'Lights' && styles.hidden]}
-          accessibilityViewIsModal={tab !== 'Lights'}
-          accessibilityElementsHidden={tab === 'Lights'}
+          style={[styles.settingsPanel, tab !== 'Schedule' && styles.hidden]}
+          accessibilityElementsHidden={tab !== 'Schedule'}
           importantForAccessibility={
-            tab === 'Lights' ? 'no-hide-descendants' : 'auto'
+            tab === 'Schedule' ? 'auto' : 'no-hide-descendants'
+          }
+        >
+          <ScheduleScreen
+            connected={!!connected}
+            supported={deviceStatus?.capabilities?.weeklySchedule === 1}
+            disabled={blocked}
+            response={scheduleState}
+            error={scheduleError}
+            onSave={(value, base) =>
+              run(() => scheduleWork(() => saveSchedule(value, base)))
+            }
+            onRefresh={() => run(() => scheduleWork(() => loadSchedule()))}
+            onSync={() => run(() => scheduleWork(() => loadSchedule(true)))}
+            onResume={() =>
+              run(() =>
+                scheduleWork(async () => {
+                  if (!scheduleState) return;
+                  setScheduleState(
+                    await api().resumeSchedule(scheduleState.bootId),
+                  );
+                }),
+              )
+            }
+            onUpdates={() => setTab('Updates')}
+          />
+        </View>
+        <View
+          testID="settings-panel"
+          style={[
+            styles.settingsPanel,
+            (tab === 'Lights' || tab === 'Schedule') && styles.hidden,
+          ]}
+          accessibilityViewIsModal={tab !== 'Lights' && tab !== 'Schedule'}
+          accessibilityElementsHidden={tab === 'Lights' || tab === 'Schedule'}
+          importantForAccessibility={
+            tab === 'Lights' || tab === 'Schedule'
+              ? 'no-hide-descendants'
+              : 'auto'
           }
           onAccessibilityEscape={() => setTab('Lights')}
         >
@@ -1469,10 +1704,7 @@ function Controller() {
                       setColorPicker(null);
                     }}
                   />
-                  <Button
-                    label="Cancel"
-                    onPress={() => setColorPicker(null)}
-                  />
+                  <Button label="Cancel" onPress={() => setColorPicker(null)} />
                 </View>
               </ScrollView>
             </SafeAreaView>

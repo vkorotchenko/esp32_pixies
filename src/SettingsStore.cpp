@@ -13,7 +13,7 @@ bool SettingsStore::begin() {
   const bool s=settings_.begin("px-settings",false);
   const bool c=credentials_.begin("px-creds",false);
   ready_=s&&c;
-  if(!ready_) { settingsRecovery="storage_unavailable"; credentialRecovery="storage_unavailable"; powerRecovery="storage_unavailable"; }
+  if(!ready_) { settingsRecovery="storage_unavailable"; credentialRecovery="storage_unavailable"; powerRecovery="storage_unavailable"; scheduleRecovery="storage_unavailable"; }
   return ready_;
 }
 bool SettingsStore::read(Preferences& prefs,const char* key,uint8_t* out,size_t cap,size_t& length) {
@@ -100,6 +100,29 @@ bool SettingsStore::loadWifi(WifiCredential& wifi) {
   }
   wifi=temp; temp={}; return true;
 }
+bool SettingsStore::loadSchedule(pixies::ScheduleV1& out) {
+  if(!ready_) { scheduleRecovery="storage_unavailable"; return false; }
+  const bool exists=settings_.isKey("schedule");
+  uint8_t data[4096]{}; size_t n=0;
+  if(!read(settings_,"schedule",data,sizeof data,n)) {
+    scheduleRecovery=exists?"invalid_record":"missing"; return false;
+  }
+  DynamicJsonDocument doc(4096);
+  const bool ok=pixies::completeJsonObject(reinterpret_cast<const char*>(data),n)&&
+    !deserializeJson(doc,data,n,DeserializationOption::NestingLimit(5))&&
+    pixies::readSchedule(doc.as<JsonVariantConst>(),out);
+  scheduleRecovery=ok?"none":"invalid_record"; return ok;
+}
+bool SettingsStore::saveSchedule(const pixies::ScheduleV1& value) {
+  if(!pixies::validateSchedule(value)) return false;
+  DynamicJsonDocument doc(4096);
+  pixies::writeSchedule(doc.to<JsonObject>(),value);
+  String text; serializeJson(doc,text);
+  const bool ok=!doc.overflowed()&&text.length()<=4096&&
+    write(settings_,"schedule",reinterpret_cast<const uint8_t*>(text.c_str()),text.length());
+  if(ok) scheduleRecovery="none";
+  return ok;
+}
 bool SettingsStore::saveWifi(const WifiCredential& wifi) {
   return write(credentials_,"wifi",reinterpret_cast<const uint8_t*>(&wifi),sizeof wifi);
 }
@@ -121,5 +144,5 @@ bool SettingsStore::factoryReset() {
   // Separate namespaces deliberately; a partial erase is an explicit error.
   const bool s=settings_.clear();
   const bool c=credentials_.clear();
-  return s&&c&&!settings_.isKey("record")&&!settings_.isKey("power")&&!credentials_.isKey("wifi")&&!credentials_.isKey("admin");
+  return s&&c&&!settings_.isKey("record")&&!settings_.isKey("power")&&!settings_.isKey("schedule")&&!credentials_.isKey("wifi")&&!credentials_.isKey("admin");
 }

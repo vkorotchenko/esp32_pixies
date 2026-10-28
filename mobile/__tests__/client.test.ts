@@ -1,6 +1,7 @@
 import { Buffer } from 'buffer';
 import { Link, PixiesClient } from '../src/client';
 import { frames, HEADER, TIMEOUT } from '../src/protocol';
+import { scheduleFixture } from '../testFixtures/schedule';
 
 function fixture(mtu = 23) {
   let receive: (data: Buffer) => void = () => {
@@ -64,6 +65,34 @@ test('serializes the complete command and waits for the device response', async 
   await expect(pending).resolves.toEqual({ revision: 3 });
   f.client.close();
   expect(f.unsubscribe).toHaveBeenCalledTimes(1);
+});
+test('schedule save and response cross minimum MTU fragments without lighting replay', async () => {
+  const f = fixture(23);
+  const saved = scheduleFixture();
+  saved.revision = 2;
+  const pending = f.client.saveSchedule(saved.bootId, 1, saved.schedule);
+  await flush();
+  const wire = JSON.parse(
+    Buffer.concat(f.written.map(p => p.subarray(HEADER))).toString(),
+  );
+  expect(wire.op).toBe('schedule.save');
+  expect(wire.args).toEqual({
+    bootId: saved.bootId,
+    baseRevision: 1,
+    schedule: saved.schedule,
+  });
+  expect(f.written.length).toBeGreaterThan(20);
+  f.reply(saved);
+  await expect(pending).resolves.toEqual(saved);
+  f.client.close();
+});
+test('schedule command limit is smaller than the unchanged transport limit', async () => {
+  const f = fixture();
+  await expect(
+    f.client.command('schedule.save', { oversized: 'x'.repeat(4096) }),
+  ).rejects.toThrow('4096');
+  expect(f.written).toHaveLength(0);
+  f.client.close();
 });
 test.each(['storage_failed', 'revision_conflict', 'busy'])(
   'propagates %s rather than claiming success',

@@ -1,5 +1,7 @@
 #pragma once
-#ifdef PIXIES_CONTROL_TEST
+#ifdef PIXIES_WEB_API_TEST
+#include "ControlWebServer.h"
+#elif defined(PIXIES_CONTROL_TEST)
 class WebServer;
 #else
 // Narrow transport fake: compile the REAL bounded receiver. Responses include

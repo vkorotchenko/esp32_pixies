@@ -70,6 +70,47 @@ release, a pending APK installation, or a failed check/update. No published
 release is an informational state, not an update alert. Checks never lock the
 lighting controls. Both warning badges have accessible attention labels.
 
+### Weekly schedule
+
+Choose the **Schedule** tab beside **Lights**. Enable the weekly schedule,
+choose **Use phone timezone**, and enable any of the seven Monday–Sunday rows.
+Tap each ON/OFF time to choose integer hours/minutes; **Done** keeps that local
+edit and **Cancel** discards it. **Save schedule** explicitly stores all seven
+rows on the controller. No phone connection is needed while the powered
+controller runs a saved schedule.
+
+An OFF time earlier than ON ends the following day. Disabled days start no
+window, but the previous night's window can continue. Overlaps form one window;
+equal enabled ON/OFF times are invalid. The page shows controller UTC/source/age,
+saved timezone and rule expiry, effective output, pauses and manual override.
+The **Lights on** switch on capable controllers is an immediate manual action
+without sending unrelated palette drafts. Its override lasts until the next
+effective schedule boundary; **Resume schedule** clears it early. With no future
+boundary it remains until Resume, schedule Save or reboot.
+
+While **Lights** or **Schedule** is visible and the app is active, it refreshes
+schedule runtime every 15 seconds without replacing your lighting or palette
+drafts. Refresh pauses during another controller operation, updates, or loss of
+connection. Returning to the app syncs the clock and refreshes effective output.
+
+Schedule edits, including an unfinished time picker, stay local across refreshes
+and reconnects. If another client saves or the controller restarts, the editor
+keeps your draft and its original save revision, shows a conflict, and blocks
+Save. **Reload schedule** refreshes saved data and runtime without discarding
+edits. Choose **Discard draft and load saved schedule** explicitly to replace
+your draft with the latest saved version, then reapply any changes you want.
+An editor without local edits follows saved revisions automatically.
+
+On cold boot automation stays OFF until fresh phone or configured Wi-Fi/NTP time
+arrives. Powered clocks continue offline; no battery-backed RTC is assumed.
+The app syncs capable controllers on connection/foregrounding. Timezone rules
+cover two years (plus three days lookback); expiry pauses automatic output OFF.
+Refresh with **Use phone timezone** and **Save schedule**, also after timezone-law
+changes. Traveling never silently changes the saved controller timezone.
+Unavailable phone Intl/Temporal zone data disables timezone setup rather than
+substituting a fixed offset. Older firmware stays connected with ordinary lights
+and **Controller firmware update required → Open Updates** on Schedule.
+
 ### Custom palettes
 
 Each mobile palette has **1–5 colors**, with up to 10 custom palettes.

@@ -1,4 +1,5 @@
 import { Buffer } from 'buffer';
+import { ScheduleRuntime, scheduleRuntime } from './schedule';
 
 export const EFFECTS = [
   'steady',
@@ -61,6 +62,8 @@ export interface Status {
   admin: { configured: boolean };
   update: { busy: boolean; bleOtaProtocol?: number };
   power?: PowerStatus;
+  capabilities?: { weeklySchedule: 1 };
+  scheduling?: ScheduleRuntime;
 }
 export interface PowerConfig {
   supplyWatts: number;
@@ -211,7 +214,16 @@ function requireStatus(v: unknown): asserts v is Status {
 }
 export function status(v: unknown): Status {
   requireStatus(v);
-  return v;
+  const raw = v as unknown as Record<string, unknown>;
+  const supported =
+    record(raw.capabilities) && raw.capabilities.weeklySchedule === 1;
+  return {
+    ...v,
+    capabilities: supported ? { weeklySchedule: 1 } : undefined,
+    scheduling: supported
+      ? scheduleRuntime(raw.scheduling) ?? undefined
+      : undefined,
+  };
 }
 function requireWifiScan(v: unknown): asserts v is WifiScan {
   if (

@@ -44,6 +44,11 @@ class String {
     return true;
   }
   bool concat(const char*,unsigned);
+  bool concat(const char* s) { return concat(s,unsigned(strlen(s))); }
+  bool startsWith(const char* s) const { const auto n=strlen(s); return n<=length_&&!memcmp(c_str(),s,n); }
+  bool endsWith(const char* s) const { const auto n=strlen(s); return n<=length_&&!memcmp(c_str()+length_-n,s,n); }
+  void toLowerCase() { for(unsigned i=0;i<length_;++i) storage_[i]=char(tolower(static_cast<unsigned char>(storage_[i]))); }
+  void remove(unsigned at) { if(at<length_) { length_=at; storage_[at]=0; } }
   String& operator+=(const String& s) { concat(s.c_str(),unsigned(s.length())); return *this; }
   String& operator+=(const char* s) { concat(s,unsigned(strlen(s))); return *this; }
   String& operator+=(char c) { const char s[]{c,0}; concat(s,1); return *this; }
@@ -61,6 +66,7 @@ class String {
   bool operator==(const String& other) const {
     return length()==other.length()&&!memcmp(c_str(),other.c_str(),length());
   }
+  bool operator!=(const String& other) const { return !(*this==other); }
   friend String operator+(String a,const String& b) { a+=b; return a; }
 };
 

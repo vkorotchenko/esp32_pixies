@@ -2,6 +2,7 @@
 #include "Admin.h"
 #include "NetworkManager.h"
 #include "OtaUpdater.h"
+#include "ClockService.h"
 #include <functional>
 
 class DeviceControl {
@@ -14,6 +15,9 @@ class DeviceControl {
   void status(JsonDocument&);
   void ledStatus(JsonObject);
   void powerStatus(JsonObject);
+  void scheduleTick(uint32_t);
+  void scheduleStatus(JsonObject);
+  void scheduleResponse(JsonDocument&);
   int execute(const char*,JsonVariantConst,JsonDocument&);
   void restartLater();
   bool resetAll();
@@ -27,5 +31,8 @@ class DeviceControl {
   bool restarting=false;
   uint32_t restartAt=0;
   uint32_t powerRevision=1;
+  uint32_t scheduleRevision=1;
+  ClockService clock;
+  pixies::ScheduleRuntime schedule;
   std::function<bool()> clearBonds;
 };

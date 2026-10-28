@@ -128,9 +128,20 @@ void BleControl::execute(uint32_t now) {
     const JsonString op=request["op"].as<JsonString>();
     if(op.size()>32||strlen(op.c_str())!=op.size()) error(id,"invalid_json","Invalid command name",now);
     else {
-      const int status=!strncmp(op.c_str(),"ota.",4)
-        ?otaCommand(op.c_str(),request["args"],result,now)
-        :control_.execute(op.c_str(),request["args"],result);
+      const bool schedule=!strncmp(op.c_str(),"schedule.",9)||!strcmp(op.c_str(),"clock.sync")||!strcmp(op.c_str(),"lights.set");
+      int status;
+      if(schedule&&receiver_.size()>4096) {
+        auto e=result.createNestedObject("error"); e["code"]="body_too_large"; e["message"]="Schedule command exceeds 4096 bytes";
+        status=413;
+      } else {
+        status=!strncmp(op.c_str(),"ota.",4)
+          ?otaCommand(op.c_str(),request["args"],result,now)
+          :control_.execute(op.c_str(),request["args"],result);
+      }
+      if(schedule&&measureJson(result)>4096) {
+        result.clear(); auto e=result.createNestedObject("error");
+        e["code"]="out_of_memory"; e["message"]="Schedule response exceeds 4096 bytes"; status=503;
+      }
       reply(id,status,result,now);
     }
   }

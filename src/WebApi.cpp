@@ -77,6 +77,10 @@ bool WebApi::uploadGuard() {
   return pixies::adminAllowed(admin_.authenticated(server_,millis()),originValid(),admin_.csrf(server_));
 }
 bool WebApi::body(JsonDocument& doc,const char* const* keys,size_t n) {
+  const auto path=server_.uri();
+  if((path=="/api/schedule"||path=="/api/schedule/resume"||path=="/api/time/sync"||path=="/api/lights")&&server_.body().length()>4096) {
+    error(413,"body_too_large","Schedule command exceeds 4096 bytes"); return false;
+  }
   if(server_.body().length()>pixies::kMaxBody) { error(413,"body_too_large","JSON body exceeds 8192 bytes"); return false; }
   if(!pixies::completeJsonObject(server_.body().c_str(),server_.body().length())) {
     error(400,"invalid_json","Expected one complete JSON object"); return false;
@@ -163,6 +167,27 @@ void WebApi::begin() {
   server_.on("/styles.css",HTTP_GET,[this](){ headers(); server_.send_P(200,"text/css; charset=utf-8",
     reinterpret_cast<const char*>(styles_start),size_t(styles_end-styles_start)-1); });
   server_.on("/api/status",HTTP_GET,[this](){ status(); });
+  server_.on("/api/schedule",HTTP_GET,[this](){ invoke("schedule.get"); });
+  server_.on("/api/schedule",HTTP_PUT,[this](){
+    if(!adminGuard()||!idle()) return;
+    DynamicJsonDocument doc(pixies::kJsonCapacity); const char* keys[]{"bootId","baseRevision","schedule"};
+    if(body(doc,keys,3)) invoke("schedule.save",doc.as<JsonVariantConst>());
+  });
+  server_.on("/api/time/sync",HTTP_POST,[this](){
+    if(!adminGuard()||!idle()) return;
+    StaticJsonDocument<256> doc; const char* keys[]{"bootId","utcSeconds"};
+    if(body(doc,keys,2)) invoke("clock.sync",doc.as<JsonVariantConst>());
+  });
+  server_.on("/api/schedule/resume",HTTP_POST,[this](){
+    if(!adminGuard()||!idle()) return;
+    StaticJsonDocument<128> doc; const char* keys[]{"bootId"};
+    if(body(doc,keys,1)) invoke("schedule.resume",doc.as<JsonVariantConst>());
+  });
+  server_.on("/api/lights",HTTP_PUT,[this](){
+    if(!idle()) return;
+    StaticJsonDocument<256> doc; const char* keys[]{"bootId","baseRevision","on"};
+    if(body(doc,keys,3)) invoke("lights.set",doc.as<JsonVariantConst>());
+  });
   server_.on("/api/config",HTTP_GET,[this](){ config(); });
   server_.on("/api/palettes",HTTP_GET,[this](){
     invoke("palettes");

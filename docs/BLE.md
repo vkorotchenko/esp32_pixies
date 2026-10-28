@@ -60,6 +60,29 @@ state rather than automatically replaying a Save, restart, or credentials.
 
 ## Commands
 
+Weekly scheduling is optional. Read `status` first and require
+`capabilities.weeklySchedule === 1`; do not fail a basic lighting connection if
+this feature or an optional feature response is unavailable.
+
+| Scheduling operation | Exact arguments | Result |
+|---|---|---|
+| `schedule.get` | `{}` | `{bootId,revision,schedule,runtime}` |
+| `schedule.save` | `{bootId,baseRevision,schedule}` | Same envelope, new independent scheduling revision after verified NVS write/readback |
+| `clock.sync` | `{bootId,utcSeconds}` | Same envelope, volatile UTC clock sample |
+| `lights.set` | `{bootId,baseRevision,on}` | Existing configuration envelope; **lighting** revision, explicit RAM manual action |
+| `schedule.resume` | `{bootId}` | Scheduling envelope, RAM override cleared |
+
+Scheduling commands/results are at most 4096 bytes; the existing 8192-byte
+transport bound and fragmentation are unchanged. Keep one command in flight.
+Use the exact boot ID and the correct revision domain. Read after uncertain
+delivery instead of replaying commands. Mutations reject OTA/restart busy state.
+
+The [schedule schema](schedule.schema.json) is separate from the strict lighting
+config. [Weekly scheduling](API.md#weekly-scheduling) defines runtime fields,
+timezone coverage, DST behavior, persistence, and manual override semantics.
+The phone synchronizes capable controllers on connection and foregrounding;
+the controller does not need the app to remain open.
+
 | `op` | Exact `args` | Result |
 | --- | --- | --- |
 | `config` | `{}` | Current configuration/revisions/counts |
