@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Pixies weekly schedule v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "enabled", "timezone", "days"],
+  "properties": {
+    "version": { "const": 1 },
+    "enabled": { "type": "boolean" },
+    "timezone": {
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["id", "fromUtc", "untilUtc", "initialOffsetSeconds", "transitions"],
+          "properties": {
+            "id": { "type": "string", "pattern": "^[!-~]{1,64}$" },
+            "fromUtc": { "type": "integer", "minimum": 1577836800, "maximum": 2145916799 },
+            "untilUtc": { "type": "integer", "minimum": 1577836801, "maximum": 2145916800 },
+            "initialOffsetSeconds": { "type": "integer", "minimum": -50400, "maximum": 50400 },
+            "transitions": {
+              "type": "array",
+              "maxItems": 16,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["atUtc", "offsetSeconds"],
+                "properties": {
+                  "atUtc": { "type": "integer", "minimum": 1577836801, "maximum": 2145916799 },
+                  "offsetSeconds": { "type": "integer", "minimum": -50400, "maximum": 50400 }
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "days": {
+      "type": "array",
+      "minItems": 7,
+      "maxItems": 7,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["enabled", "onMinute", "offMinute"],
+        "properties": {
+          "enabled": { "type": "boolean" },
+          "onMinute": { "type": "integer", "minimum": 0, "maximum": 1439 },
+          "offMinute": { "type": "integer", "minimum": 0, "maximum": 1439 }
+        }
+      }
+    }
+  },
+  "allOf": [
+    { "if": { "properties": { "enabled": { "const": true } } }, "then": { "properties": { "timezone": { "type": "object" } } } }
+  ],
+  "$comment": "Application validation also requires fromUtc < untilUtc, strictly increasing transitions strictly inside coverage, and different onMinute/offMinute for each enabled day. Days are Monday first. Off < on extends into the following calendar day."
+}

@@ -37,6 +37,39 @@ void DeviceControl::begin() {
   bootId=id; admin.begin();
   leds.powerReady=store.loadPower(leds.powerSettings);
   if(!strcmp(store.powerRecovery,"missing")) leds.powerReady=true;
+  pixies::ScheduleV1 saved;
+  const bool loaded=store.loadSchedule(saved);
+  schedule.restore(saved,loaded||!strcmp(store.scheduleRecovery,"missing"));
+  scheduleTick(millis());
+}
+void DeviceControl::scheduleTick(uint32_t now) {
+  clock.tick(now,WiFi.status()==WL_CONNECTED);
+  schedule.tick(clock.utc(),clock.synced(),settings.live.on);
+}
+void DeviceControl::scheduleStatus(JsonObject out) {
+  out["enabled"]=schedule.saved.enabled; out["healthy"]=schedule.healthy;
+  out["recovery"]=store.scheduleRecovery;
+  out["effectiveOn"]=schedule.effectiveOn; out["automaticOn"]=schedule.automaticOn;
+  out["overrideActive"]=schedule.overrideActive; out["overrideOn"]=schedule.overrideOn;
+  if(schedule.overrideUntilUtc) out["overrideUntilUtc"]=schedule.overrideUntilUtc;
+  else out["overrideUntilUtc"]=nullptr;
+  if(schedule.nextBoundaryUtc) out["nextBoundaryUtc"]=schedule.nextBoundaryUtc;
+  else out["nextBoundaryUtc"]=nullptr;
+  out["pauseReason"]=schedule.pauseReason;
+  if(schedule.saved.hasTimezone) {
+    out["timezoneId"]=schedule.saved.timezone.id;
+    out["ruleExpiryUtc"]=schedule.saved.timezone.untilUtc;
+  } else { out["timezoneId"]=nullptr; out["ruleExpiryUtc"]=nullptr; }
+  auto c=out.createNestedObject("clock");
+  c["synced"]=clock.synced(); c["source"]=clock.source();
+  if(clock.synced()) {
+    c["utcSeconds"]=clock.utc(); c["syncAgeSeconds"]=clock.syncAgeSeconds();
+  } else { c["utcSeconds"]=nullptr; c["syncAgeSeconds"]=nullptr; }
+}
+void DeviceControl::scheduleResponse(JsonDocument& doc) {
+  doc.clear(); doc["bootId"]=bootId; doc["revision"]=scheduleRevision;
+  pixies::writeSchedule(doc.createNestedObject("schedule"),schedule.saved);
+  scheduleStatus(doc.createNestedObject("runtime"));
 }
 void DeviceControl::restartLater() { restarting=true; restartAt=millis(); }
 bool DeviceControl::resetAll() {
@@ -92,6 +125,8 @@ void DeviceControl::status(JsonDocument& doc) {
   update["state"]=ota.state; update["busy"]=ota.busy; update["receivedBytes"]=ota.received();
   update["expectedBytes"]=ota.expected(); update["slotBytes"]=ota.slotSize(); update["error"]=ota.error;
   doc["restarting"]=restarting;
+  doc["capabilities"]["weeklySchedule"]=1;
+  scheduleStatus(doc.createNestedObject("scheduling"));
 }
 void DeviceControl::ledStatus(JsonObject led) {
   led["ready"]=leds.ready; led["gpio"]=PIXIES_LED_PIN;
@@ -119,7 +154,12 @@ void DeviceControl::powerStatus(JsonObject power) {
 }
 int DeviceControl::execute(const char* op,JsonVariantConst args,JsonDocument& out) {
   out.clear();
+  scheduleTick(millis());
   const auto bad=[&](){ return failure(out,400,"invalid_json","Expected exactly the documented command fields"); };
+  if(!strcmp(op,"schedule.get")) {
+    if(!fields(args,{})) return bad();
+    scheduleResponse(out); return 200;
+  }
   if(!strcmp(op,"config")||!strcmp(op,"status")||!strcmp(op,"palettes")||!strcmp(op,"wifi.scan.get")) {
     if(!fields(args,{})) return bad();
     if(!strcmp(op,"config")) config(out);
@@ -142,6 +182,43 @@ int DeviceControl::execute(const char* op,JsonVariantConst args,JsonDocument& ou
     return 200;
   }
   if(ota.busy||restarting) return failure(out,409,"busy","Update or restart in progress");
+  if(!strcmp(op,"schedule.save")||!strcmp(op,"clock.sync")||!strcmp(op,"lights.set")||!strcmp(op,"schedule.resume")) {
+    const bool save=!strcmp(op,"schedule.save"), sync=!strcmp(op,"clock.sync"), manual=!strcmp(op,"lights.set");
+    if(save?!fields(args,{"bootId","baseRevision","schedule"}):
+       sync?!fields(args,{"bootId","utcSeconds"}):
+       manual?!fields(args,{"bootId","baseRevision","on"}):!fields(args,{"bootId"})) return bad();
+    if(measureJson(args)+64>4096) return failure(out,413,"body_too_large","Schedule command exceeds 4096 bytes");
+    if(!text(args["bootId"],16,16)||args["bootId"]!=bootId)
+      return failure(out,409,"boot_conflict","Controller restarted; reload before retrying");
+    if(save||manual) {
+      if(!args["baseRevision"].is<uint32_t>()||args["baseRevision"].is<bool>())
+        return failure(out,422,"validation","baseRevision must be an integer");
+      const auto revision=save?scheduleRevision:settings.revision;
+      if(args["baseRevision"].as<uint32_t>()!=revision||revision==UINT32_MAX)
+        return failure(out,409,"revision_conflict","Reload before retrying");
+    }
+    if(save) {
+      pixies::ScheduleV1 candidate;
+      if(!pixies::readSchedule(args["schedule"],candidate))
+        return failure(out,422,"validation","Invalid complete seven-day schedule or timezone rules");
+      if(!store.saveSchedule(candidate))
+        return failure(out,500,"storage_failed","Schedule save was not verified; previous automation remains active");
+      schedule.restore(candidate); ++scheduleRevision;
+    } else if(sync) {
+      if(args["utcSeconds"].is<bool>()||!args["utcSeconds"].is<int64_t>()||
+         !clock.sync(args["utcSeconds"].as<int64_t>(),"phone",millis()))
+        return failure(out,422,"validation","UTC must be an integer in 2020..2037");
+    } else if(manual) {
+      if(!args["on"].is<bool>()) return failure(out,422,"validation","on must be boolean");
+      auto candidate=settings.live; candidate.on=args["on"].as<bool>();
+      if(!settings.preview(candidate,settings.revision))
+        return failure(out,409,"revision_conflict","Reload configuration before retrying");
+      schedule.manual(candidate.on,clock.utc(),clock.synced());
+    } else schedule.resume();
+    scheduleTick(millis());
+    if(manual) config(out); else scheduleResponse(out);
+    return 200;
+  }
   if(!strcmp(op,"power.save")) {
     if(!fields(args,{"baseRevision","power"})) return bad();
     const auto revision=args["baseRevision"];
@@ -169,13 +246,15 @@ int DeviceControl::execute(const char* op,JsonVariantConst args,JsonDocument& ou
       pixies::Settings candidate; const char* field;
       if(!pixies::readSettings(args["config"],candidate,field))
         return failure(out,422,"validation","Invalid configuration; nothing applied",field);
+      const bool changedOn=candidate.on!=settings.live.on;
       if(!settings.preview(candidate,revision.as<uint32_t>()))
         return failure(out,409,"revision_conflict","Reload configuration before retrying");
+      if(changedOn) schedule.manual(candidate.on,clock.utc(),clock.synced());
     } else {
       if(!store.saveSettings(settings.live)) return failure(out,500,"storage_failed","Settings were not confirmed saved");
       settings.saved();
     }
-    config(out); return 200;
+    scheduleTick(millis()); config(out); return 200;
   }
   if(!strcmp(op,"wifi.scan")) {
     if(!fields(args,{})) return bad();

@@ -14,6 +14,7 @@ import pathlib
 import re
 import shlex
 import subprocess
+import sys
 import tempfile
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -72,10 +73,10 @@ def main():
         subprocess.run(cc + ["-std=c11", *sanitizer, "-I", str(unity), "-c",
                             str(unity / "unity.c"), "-o", str(build / "unity.o")], check=True)
         flags = ["-std=c++17", *sanitizer, "-Wall", "-Wextra", "-Werror"]
-        for include in ("test/stubs", "src", "lib/PixiesCore"):
+        for include in ("test/stubs", "src", "include", "lib/PixiesCore"):
             flags += ["-I", str(ROOT / include)]
         flags += ["-I", str(unity), "-I", str(arduino_json)]
-        core = [str(ROOT / f"lib/PixiesCore/{name}.cpp") for name in ("Core", "SettingsJson")]
+        core = [str(ROOT / f"lib/PixiesCore/{name}.cpp") for name in ("Core", "SettingsJson", "Schedule", "ScheduleJson", "BleProtocol")]
 
         def run(suite, label, extra=(), expect=None):
             binary = build / label
@@ -84,6 +85,8 @@ def main():
                 command += [f'-DPIXIES_PINNED_METHODS="{pinned}"']
             command += [str(ROOT / f"test/test_{suite}/test_main.cpp"), *core,
                         str(build / "unity.o"), "-o", str(binary)]
+            if sys.platform.startswith("linux"):
+                command += ["-lcrypto"]
             print(f"\nBuilding {label} with ASan + UBSan", flush=True)
             subprocess.run(command, cwd=ROOT, check=True)
             environment = dict(os.environ, ASAN_OPTIONS="halt_on_error=1",
@@ -109,6 +112,9 @@ def main():
 
         run("http", "http-pinned")
         run("network", "network-real-state-machine")
+        run("schedule_http", "schedule-real-routes")
+        run("control", "schedule-control-and-ble")
+        run("schedule", "schedule-pure-and-clock")
         if args.prove_regressions:
             receiver = (ROOT / "src/BoundedWebServer.cpp").read_text()
             framing = build / "framing_mutation.cpp"

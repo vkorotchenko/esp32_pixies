@@ -61,6 +61,8 @@ bool validatePower(const PowerSettings&, const char*& field);
 uint32_t powerBudgetMa(const PowerSettings&, uint32_t hardwareBudgetMa);
 Power render(const Settings&, uint64_t elapsedMs, Rgb*, size_t activeCount,
              uint32_t budgetMa, uint16_t ledMilliWatts = 300);
+Power render(const Settings&, bool effectiveOn, uint64_t elapsedMs, Rgb*, size_t activeCount,
+             uint32_t budgetMa, uint16_t ledMilliWatts = 300);
 class Clock {
   uint32_t last_ = 0;
   uint64_t elapsed_ = 0;

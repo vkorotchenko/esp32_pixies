@@ -17,6 +17,11 @@ The top-right settings icon opens **Connection**, **Updates**, **Wi-Fi**, and
 icon and relevant menu item; missing Bluetooth or Internet never changes pages.
 Firmware and Android app installation still require your approval.
 
+**Lights | Schedule** tabs let you save one ON/OFF window for each weekday.
+The controller runs the saved schedule without the app remaining open.
+Cold boot needs fresh phone or Wi-Fi/NTP time; expired timezone rules pause
+automation OFF. See [weekly scheduling](mobile/README.md#weekly-schedule).
+
 **Hardware status:** USB programming and startup were verified on the target
 module. Android BLE connection and lighting-control access are verified. The
 identified string uses WS2811 pixels; the WS2811/RGB output profile still needs

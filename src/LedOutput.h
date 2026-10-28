@@ -20,7 +20,7 @@ class PixiesBus : public NeoPixelBus<PixiesColorFeature,PixiesOutputMethod> {
 class LedOutput {
  public:
   bool begin(uint16_t count);
-  void tick(const pixies::Settings&,uint32_t now);
+  void tick(const pixies::Settings&,uint32_t now,bool effectiveOn);
   void blank();
   void resume() { paused_=false; }
   pixies::Power power;

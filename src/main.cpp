@@ -63,7 +63,6 @@ void setup() {
 }
 void loop() {
   const uint32_t now=millis();
-  leds.tick(settings.live,now);
   network.tick(now);
   bluetooth.tick(now);
   api.tick(now);
@@ -71,5 +70,8 @@ void loop() {
 #if PIXIES_RECOVERY_PIN >= 0
   recoveryTick(now);
 #endif
+  const uint32_t renderNow=millis();
+  control.scheduleTick(renderNow);
+  leds.tick(settings.live,renderNow,control.schedule.effectiveOn);
   yield();
 }
