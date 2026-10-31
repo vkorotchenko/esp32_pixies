@@ -225,7 +225,8 @@ struct BleFixture:Fixture {
         const auto& frame=server.service.tx.notifications[seen++];
         if(response.push(frame.data(),frame.size(),time,true)==pixies::ble::Result::Complete) {
           if(deferredRestart) TEST_ASSERT_TRUE(control.restarting);
-          TEST_ASSERT_FALSE(bool(deserializeJson(reply,response.data(),response.size())));
+          // Read-only input makes reply own strings after the local receiver dies.
+          TEST_ASSERT_FALSE(bool(deserializeJson(reply,static_cast<const char*>(response.data()),response.size())));
           return reply["status"].as<int>();
         }
       }
