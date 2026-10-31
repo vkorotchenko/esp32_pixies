@@ -13,17 +13,21 @@ cloud service, or mandatory website password.
    only if exactly one controller appears. Allow Bluetooth access and accept
    normal OS pairing if prompted. If several appear, use the top-right settings
    icon and choose **Connection**.
-3. Choose a theme/effect, adjust sliders/count/palettes, then **Preview** or
-   **Save**. Save remembers your settings without restarting the ESP.
+3. Use **Select** on a preset or effect row. **Settings** opens preset colors or
+   the effect's brightness, speed, intensity and density controls in a popup.
+   Apply popup edits to the draft, then **Preview** or **Save**.
+   Save remembers your settings without restarting the ESP.
    Only a changed LED count needs Save followed by a manual Restart; themes,
    effects, brightness and the other lighting controls do not.
-   The LED-count slider uses 25-LED increments from 25 to 1000. An existing count
-   outside those increments stays unchanged until you move the slider.
 4. Optionally open **Settings → Wi-Fi**, scan/select a 2.4 GHz router (or enter a hidden
    SSID), and connect. Credentials are tested and stored by the ESP, not the app.
    The app reports the outcome/address while your phone stays on its normal network.
 5. **Settings → Device settings** shows LED readiness/frame/current estimates,
-   power settings and Restart.
+   LED count, power settings and Restart. The LED-count slider uses 25-LED
+   increments from 25 to 1000; existing counts outside those increments stay
+   unchanged until you move it. **Save lighting settings** saves the complete
+   lighting draft, including LED count. Then manually **Restart ESP** to apply
+   a changed count.
    The optional website password is needed only for existing web administration/OTA.
 
 The first clean device uses light-blue twinkling. Existing saved settings always
@@ -113,13 +117,29 @@ and **Controller firmware update required → Open Updates** on Schedule.
 
 ### Custom palettes
 
-Each mobile palette has **1–5 colors**, with up to 10 custom palettes.
+Light blue, Halloween and Christmas each have a preset row with **Select** and
+**Settings**. Preset color settings use the same RGB picker as custom palettes.
+**Apply preset colors** updates only the local draft; editing a different preset
+does not select it. **Preview** or **Save** sends it to the controller.
+Preset edits are stored as custom-palette overrides, preserving compatibility
+with existing firmware and the original built-in definitions.
+
+Effects also have **Select** and **Settings** rows. Brightness through density
+live only in the effect settings popup. **Apply effect draft** selects that
+effect with the edited control values; opening or canceling the popup changes
+nothing. The controller retains one active effect/control configuration.
+
+Use **+** in the Effects section to create a custom palette, or its row's
+**Settings** to edit it in a popup. Each palette has **1–5 colors**, with up to
+10 stored customizations including customized presets.
 Tap a color swatch or **Add color** to choose any RGB color with the Red, Green,
 and Blue sliders and live preview. **Done** applies it only to the palette editor;
 **Cancel** (or Android Back) discards that picker change, including a new color.
 Use **Add palette draft** or **Update palette draft**, then explicitly **Preview**
 (RAM only) or **Save** (persistent) to send changes to the controller. Moving
-the picker sliders never sends lighting commands.
+the picker sliders never sends lighting commands. **Cancel palette** discards
+unfinished popup edits. Editing an existing palette does not select it; use
+its **Select** button. Deletion removes only the draft until Preview or Save.
 
 Existing controller palettes with 6–8 colors load without losing any colors.
 The app warns and blocks Preview/Save until you explicitly remove colors to

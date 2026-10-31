@@ -109,8 +109,8 @@ function expectHome() {
       .importantForAccessibility,
   ).toBe('auto');
   expect(
-    rendered.root.findByProps({ accessibilityLabel: 'LED count' }),
-  ).toBeDefined();
+    rendered.root.findAllByProps({ accessibilityLabel: 'LED count' }),
+  ).toHaveLength(0);
 }
 async function openSettings(name: string) {
   await act(async () =>
@@ -120,6 +120,41 @@ async function openSettings(name: string) {
   );
   await act(async () =>
     rendered.root.findByProps({ label: name }).props.onPress(),
+  );
+}
+async function openPalette(name?: string) {
+  await act(async () =>
+    rendered.root
+      .findByProps({
+        accessibilityLabel: name ? `Edit ${name}` : 'Add custom palette',
+      })
+      .props.onPress(),
+  );
+}
+async function changeBrightness(value: number) {
+  await act(async () =>
+    rendered.root
+      .findByProps({ accessibilityLabel: 'twinkle settings' })
+      .props.onPress(),
+  );
+  await act(async () =>
+    rendered.root
+      .findByProps({ accessibilityLabel: 'brightness' })
+      .props.onValueChange(value),
+  );
+  await act(async () =>
+    rendered.root.findByProps({ label: 'Apply effect draft' }).props.onPress(),
+  );
+}
+async function changeLedCount(value: number) {
+  await openSettings('Device settings');
+  await act(async () =>
+    rendered.root
+      .findByProps({ accessibilityLabel: 'LED count' })
+      .props.onValueChange(value),
+  );
+  await act(async () =>
+    rendered.root.findByProps({ label: 'Back to lights' }).props.onPress(),
   );
 }
 async function expectAttention(name: string, value: boolean) {
@@ -155,24 +190,26 @@ test('opens the full disabled Lights form immediately with settings hidden behin
     rendered.root.findByProps({ accessibilityLabel: 'Lights on' }).props
       .disabled,
   ).toBe(true);
+  for (const accessibilityLabel of [
+    'Select Light blue preset',
+    'Light blue color settings',
+    'Select twinkle effect',
+    'twinkle settings',
+    'Add custom palette',
+  ]) {
+    expect(
+      rendered.root.findByProps({ accessibilityLabel }).props.disabled,
+    ).toBe(true);
+  }
   expect(
-    rendered.root.findByProps({ accessibilityLabel: 'brightness' }).props
-      .disabled,
-  ).toBe(true);
-  expect(
-    rendered.root.findByProps({ accessibilityLabel: 'LED count' }).props
-      .disabled,
-  ).toBe(true);
+    rendered.root.findAllByProps({ accessibilityLabel: 'brightness' }),
+  ).toHaveLength(0);
   expect(rendered.root.findByProps({ label: 'Save' }).props.disabled).toBe(
     true,
   );
-  expect(rendered.root.findByProps({ label: 'Add color' }).props.disabled).toBe(
-    true,
-  );
   expect(
-    rendered.root.findByProps({ accessibilityLabel: 'Edit color 1' }).props
-      .disabled,
-  ).toBe(true);
+    rendered.root.findAllByProps({ accessibilityLabel: 'Edit color 1' }),
+  ).toHaveLength(0);
   expect(
     StyleSheet.flatten(
       rendered.root.findByProps({ testID: 'lighting-controls' }).props.style,
@@ -191,6 +228,14 @@ test('opens the full disabled Lights form immediately with settings hidden behin
   ).toHaveLength(0);
   expect(mockScan).toHaveBeenCalledTimes(1);
   expect(latestRelease).toHaveBeenCalledTimes(1);
+  await openSettings('Device settings');
+  expect(
+    rendered.root.findByProps({ accessibilityLabel: 'LED count' }).props
+      .disabled,
+  ).toBe(true);
+  await act(async () =>
+    rendered.root.findByProps({ label: 'Back to lights' }).props.onPress(),
+  );
 });
 test('makes permission/connection errors visible rather than pretending to connect', async () => {
   mockScan.mockRejectedValue(new Error('Bluetooth permission denied'));
@@ -246,6 +291,40 @@ async function connectController() {
   expect(rememberController).toHaveBeenCalledWith('original-id');
   expectHome();
   await expectAttention('Connection', false);
+}
+function editableController(initial = configuration()) {
+  const device = { current: initial };
+  const command = jest
+    .spyOn(PixiesClient.prototype, 'command')
+    .mockImplementation(async (op, args) => {
+      const current = device.current;
+      if (op === 'config') return current;
+      if (op === 'status')
+        return { ...healthFixture(), bootId: current.bootId };
+      if (op === 'config.set' && isConfig(args?.config)) {
+        device.current = {
+          ...current,
+          config: args.config,
+          revision: current.revision + 1,
+          dirty: true,
+          requestedLedCount: args.config.ledCount,
+          restartRequired: args.config.ledCount !== current.activeLedCount,
+        };
+        return device.current;
+      }
+      if (op === 'config.save') {
+        device.current = {
+          ...current,
+          dirty: false,
+          savedRevision: current.revision,
+          savedLedCount: current.requestedLedCount,
+          savedRestartRequired: current.restartRequired,
+        };
+        return device.current;
+      }
+      throw new Error(`Unexpected operation: ${op}`);
+    });
+  return { device, command };
 }
 test('reconnects the remembered native ID without scanning or switching away from Lights', async () => {
   const current = configuration();
@@ -336,7 +415,9 @@ test('malformed scheduling cannot disconnect working lights; manual acks retain 
       .disabled,
   ).toBe(false);
   await act(async () =>
-    rendered.root.findByProps({ label: 'Christmas' }).props.onPress(),
+    rendered.root
+      .findByProps({ accessibilityLabel: 'Select Christmas preset' })
+      .props.onPress(),
   );
   malformed = false;
   await act(async () =>
@@ -344,9 +425,10 @@ test('malformed scheduling cannot disconnect working lights; manual acks retain 
       .findByProps({ accessibilityLabel: 'Lights on' })
       .props.onValueChange(false),
   );
-  expect(rendered.root.findByProps({ label: 'Christmas' }).props.selected).toBe(
-    true,
-  );
+  expect(
+    rendered.root.findByProps({ accessibilityLabel: 'Select Christmas preset' })
+      .props.selected,
+  ).toBe(true);
   expect(command.mock.calls.filter(([op]) => op === 'config.set')).toHaveLength(
     0,
   );
@@ -406,18 +488,22 @@ test('foreground Lights follows automatic boundaries and manual overrides withou
   const lights = () =>
     rendered.root.findByProps({ accessibilityLabel: 'Lights on' });
   expect(lights().props.value).toBe(false);
+  await changeBrightness(47);
+  await changeLedCount(350);
+  await openPalette();
   await act(async () => {
-    rendered.root.findByProps({ label: 'Christmas' }).props.onPress();
-    rendered.root
-      .findByProps({ accessibilityLabel: 'brightness' })
-      .props.onValueChange(47);
-    rendered.root
-      .findByProps({ accessibilityLabel: 'LED count' })
-      .props.onValueChange(350);
     rendered.root
       .findByProps({ accessibilityLabel: 'Palette name' })
       .props.onChangeText('Unsaved palette');
   });
+  await act(async () =>
+    rendered.root.findByProps({ label: 'Add palette draft' }).props.onPress(),
+  );
+  await act(async () =>
+    rendered.root
+      .findByProps({ accessibilityLabel: 'Select Christmas preset' })
+      .props.onPress(),
+  );
   schedule = {
     ...schedule,
     runtime: { ...schedule.runtime, effectiveOn: true },
@@ -443,15 +529,31 @@ test('foreground Lights follows automatic boundaries and manual overrides withou
   };
   await act(async () => jest.advanceTimersByTime(15000));
   expect(lights().props.value).toBe(true);
-  expect(rendered.root.findByProps({ label: 'Christmas' }).props.selected).toBe(
-    true,
+  expect(
+    rendered.root.findByProps({ accessibilityLabel: 'Select Christmas preset' })
+      .props.selected,
+  ).toBe(true);
+  await act(async () =>
+    rendered.root
+      .findByProps({ accessibilityLabel: 'twinkle settings' })
+      .props.onPress(),
   );
   expect(
     rendered.root.findByProps({ accessibilityLabel: 'brightness' }).props.value,
   ).toBe(47);
+  await act(async () =>
+    rendered.root
+      .findByProps({ label: 'Cancel effect settings' })
+      .props.onPress(),
+  );
+  await openSettings('Device settings');
   expect(
     rendered.root.findByProps({ accessibilityLabel: 'LED count' }).props.value,
   ).toBe(350);
+  await act(async () =>
+    rendered.root.findByProps({ label: 'Back to lights' }).props.onPress(),
+  );
+  await openPalette('Unsaved palette');
   expect(
     rendered.root.findByProps({ accessibilityLabel: 'Palette name' }).props
       .value,
@@ -502,9 +604,9 @@ test('runtime polling serializes commands, pauses when inactive or unfocused, an
   expect(command.mock.calls.filter(([op]) => op === 'lights.set')).toHaveLength(
     0,
   );
-  expect(command.mock.calls.filter(([op]) => op === 'schedule.get')).toHaveLength(
-    1,
-  );
+  expect(
+    command.mock.calls.filter(([op]) => op === 'schedule.get'),
+  ).toHaveLength(1);
   await act(async () => {
     lifecycle.forEach(fn => fn('background'));
     finish({
@@ -672,9 +774,10 @@ test('Schedule saves use the editor base, block remote conflicts, and settle the
       .disabled,
   ).toBe(true);
   await act(async () =>
-    rendered.root
-      .findByType(ScheduleScreen)
-      .props.onSave(schedule.schedule, { bootId: schedule.bootId, revision: 1 }),
+    rendered.root.findByType(ScheduleScreen).props.onSave(schedule.schedule, {
+      bootId: schedule.bootId,
+      revision: 1,
+    }),
   );
   expect(
     command.mock.calls.filter(([op]) => op === 'schedule.save'),
@@ -941,6 +1044,349 @@ test('Preview explains Save without implying a reboot or claiming unchanged save
     'config.set',
   ]);
 });
+test.each([
+  { name: 'Light blue', id: 'preset-light-blue', colors: ['#ADD8E6'] },
+  { name: 'Halloween', id: 'preset-halloween', colors: ['#00FF00', '#FFA500'] },
+  {
+    name: 'Christmas',
+    id: 'preset-christmas',
+    colors: ['#FF0000', '#FFFFFF', '#00FF00'],
+  },
+])(
+  'customizes $name colors as a saved controller-compatible override without selecting another preset',
+  async ({ name, id, colors }) => {
+    const initial = configuration();
+    initial.config.paletteId = 'christmas';
+    const porch = { id: 'porch', name: 'Porch', colors: ['#112233'] };
+    initial.config.customPalettes = [porch];
+    const { device, command } = editableController(initial);
+    await connectController();
+    await act(async () =>
+      rendered.root
+        .findByProps({ accessibilityLabel: `${name} color settings` })
+        .props.onPress(),
+    );
+    await act(async () =>
+      rendered.root
+        .findByProps({ accessibilityLabel: 'Edit color 1' })
+        .props.onPress(),
+    );
+    await act(async () =>
+      rendered.root
+        .findByProps({ accessibilityLabel: 'Red channel' })
+        .props.onValueChange(18),
+    );
+    await act(async () =>
+      rendered.root.findByProps({ label: 'Done' }).props.onPress(),
+    );
+    await act(async () =>
+      rendered.root
+        .findByProps({ label: 'Apply preset colors' })
+        .props.onPress(),
+    );
+    expect(command.mock.calls.map(([op]) => op)).toEqual(['config', 'status']);
+    expect(
+      rendered.root.findByProps({
+        accessibilityLabel: 'Select Christmas preset',
+      }).props.selected,
+    ).toBe(true);
+    await act(async () =>
+      rendered.root.findByProps({ label: 'Save' }).props.onPress(),
+    );
+    expect(device.current.config.customPalettes).toEqual([
+      porch,
+      { id, name, colors: [`#12${colors[0].slice(3)}`, ...colors.slice(1)] },
+    ]);
+    expect(device.current.config.paletteId).toBe(
+      name === 'Christmas' ? id : 'christmas',
+    );
+    expect(device.current.dirty).toBe(false);
+    expect(isConfig(device.current.config)).toBe(true);
+    await act(async () =>
+      rendered.root
+        .findByProps({ accessibilityLabel: `Select ${name} preset` })
+        .props.onPress(),
+    );
+    await act(async () =>
+      rendered.root.findByProps({ label: 'Preview' }).props.onPress(),
+    );
+    expect(device.current.config.paletteId).toBe(id);
+    await act(async () =>
+      rendered.root
+        .findByProps({ accessibilityLabel: `${name} color settings` })
+        .props.onPress(),
+    );
+    expect(
+      rendered.root.findByProps({ accessibilityLabel: 'Edit color 1' }).props
+        .accessibilityValue.text,
+    ).toBe(`#12${colors[0].slice(3)}`);
+  },
+);
+test.each([false, true])(
+  'preset editing respects a full customization store and can update an existing override: %s',
+  async hasOverride => {
+    const initial = configuration();
+    initial.config.customPalettes = Array.from(
+      { length: hasOverride ? 9 : 10 },
+      (_, index) => ({
+        id: `p${index}`,
+        name: `Palette ${index}`,
+        colors: ['#112233'],
+      }),
+    );
+    if (hasOverride)
+      initial.config.customPalettes.push({
+        id: 'preset-light-blue',
+        name: 'Light blue',
+        colors: ['#112233'],
+      });
+    const { device, command } = editableController(initial);
+    await connectController();
+    const add = rendered.root.findByProps({
+      accessibilityLabel: 'Add custom palette',
+    });
+    expect(add.props.disabled).toBe(true);
+    await act(async () => add.props.onPress());
+    expect(
+      rendered.root.findAllByProps({ testID: 'palette-settings-modal' }),
+    ).toHaveLength(0);
+    await act(async () =>
+      rendered.root
+        .findByProps({ accessibilityLabel: 'Light blue color settings' })
+        .props.onPress(),
+    );
+    await act(async () =>
+      rendered.root
+        .findByProps({ accessibilityLabel: 'Edit color 1' })
+        .props.onPress(),
+    );
+    await act(async () =>
+      rendered.root
+        .findByProps({ accessibilityLabel: 'Red channel' })
+        .props.onValueChange(0),
+    );
+    await act(async () =>
+      rendered.root.findByProps({ label: 'Done' }).props.onPress(),
+    );
+    await act(async () =>
+      rendered.root
+        .findByProps({ label: 'Apply preset colors' })
+        .props.onPress(),
+    );
+    expect(command.mock.calls.map(([op]) => op)).toEqual(['config', 'status']);
+    if (hasOverride) {
+      await act(async () =>
+        rendered.root.findByProps({ label: 'Save' }).props.onPress(),
+      );
+      expect(device.current.config.customPalettes).toHaveLength(10);
+      expect(
+        device.current.config.customPalettes.find(
+          p => p.id === 'preset-light-blue',
+        )?.colors,
+      ).toEqual(['#002233']);
+    } else {
+      expect(JSON.stringify(rendered.toJSON())).toContain(
+        'Customized presets also count toward this limit.',
+      );
+      await act(async () =>
+        rendered.root.findByProps({ label: 'Cancel palette' }).props.onPress(),
+      );
+      expect(device.current.config.customPalettes).toEqual(
+        initial.config.customPalettes,
+      );
+      expect(
+        rendered.root.findByProps({
+          accessibilityLabel: 'Select Light blue preset',
+        }).props.selected,
+      ).toBe(true);
+    }
+  },
+);
+test('preset overrides preserve unrelated custom palettes that already use a preset ID', async () => {
+  const initial = configuration();
+  const porch = { id: 'preset-halloween', name: 'Porch', colors: ['#123456'] };
+  initial.config.customPalettes = [porch];
+  initial.config.paletteId = porch.id;
+  const { device } = editableController(initial);
+  await connectController();
+  expect(
+    rendered.root.findByProps({ accessibilityLabel: 'Edit Porch' }),
+  ).toBeDefined();
+  await act(async () =>
+    rendered.root
+      .findByProps({ accessibilityLabel: 'Halloween color settings' })
+      .props.onPress(),
+  );
+  expect(
+    rendered.root.findByProps({ accessibilityLabel: 'Edit color 1' }).props
+      .accessibilityValue.text,
+  ).toBe('#00FF00');
+  await act(async () =>
+    rendered.root
+      .findByProps({ accessibilityLabel: 'Edit color 1' })
+      .props.onPress(),
+  );
+  await act(async () =>
+    rendered.root
+      .findByProps({ accessibilityLabel: 'Red channel' })
+      .props.onValueChange(18),
+  );
+  await act(async () =>
+    rendered.root.findByProps({ label: 'Done' }).props.onPress(),
+  );
+  await act(async () =>
+    rendered.root.findByProps({ label: 'Apply preset colors' }).props.onPress(),
+  );
+  await act(async () =>
+    rendered.root.findByProps({ label: 'Save' }).props.onPress(),
+  );
+  expect(device.current.config.customPalettes).toEqual([
+    porch,
+    {
+      id: 'preset-halloween-2',
+      name: 'Halloween',
+      colors: ['#12FF00', '#FFA500'],
+    },
+  ]);
+  expect(device.current.config.paletteId).toBe(porch.id);
+  await act(async () =>
+    rendered.root
+      .findByProps({ accessibilityLabel: 'Select Halloween preset' })
+      .props.onPress(),
+  );
+  await act(async () =>
+    rendered.root.findByProps({ label: 'Preview' }).props.onPress(),
+  );
+  expect(device.current.config.paletteId).toBe('preset-halloween-2');
+  await act(async () =>
+    rendered.root
+      .findByProps({ accessibilityLabel: 'Halloween color settings' })
+      .props.onPress(),
+  );
+  expect(
+    rendered.root.findByProps({ accessibilityLabel: 'Edit color 1' }).props
+      .accessibilityValue.text,
+  ).toBe('#12FF00');
+});
+test('effect settings keep all four sliders in a cancelable popup and apply only an explicit effect draft', async () => {
+  const { device, command } = editableController();
+  await connectController();
+  expect(
+    rendered.root.findAllByProps({ accessibilityLabel: 'brightness' }),
+  ).toHaveLength(0);
+  const controls = { brightness: 42, speed: 75, intensity: 66, density: 33 };
+  await act(async () =>
+    rendered.root
+      .findByProps({ accessibilityLabel: 'candle settings' })
+      .props.onPress(),
+  );
+  for (const [key, value] of Object.entries(controls)) {
+    await act(async () =>
+      rendered.root
+        .findByProps({ accessibilityLabel: key })
+        .props.onValueChange(value),
+    );
+  }
+  await act(async () =>
+    rendered.root
+      .findByProps({ label: 'Cancel effect settings' })
+      .props.onPress(),
+  );
+  expect(
+    rendered.root.findByProps({ accessibilityLabel: 'Select twinkle effect' })
+      .props.selected,
+  ).toBe(true);
+  await act(async () =>
+    rendered.root
+      .findByProps({ accessibilityLabel: 'candle settings' })
+      .props.onPress(),
+  );
+  for (const [key, value] of Object.entries(controls)) {
+    expect(
+      rendered.root.findByProps({ accessibilityLabel: key }).props.value,
+    ).toBe(device.current.config[key as keyof typeof controls]);
+    await act(async () =>
+      rendered.root
+        .findByProps({ accessibilityLabel: key })
+        .props.onValueChange(value),
+    );
+  }
+  await act(async () =>
+    rendered.root.findByProps({ label: 'Apply effect draft' }).props.onPress(),
+  );
+  expect(command.mock.calls.map(([op]) => op)).toEqual(['config', 'status']);
+  expect(
+    rendered.root.findByProps({ accessibilityLabel: 'Select candle effect' })
+      .props.selected,
+  ).toBe(true);
+  expect(
+    rendered.root.findAllByProps({ accessibilityLabel: 'brightness' }),
+  ).toHaveLength(0);
+  await act(async () =>
+    rendered.root.findByProps({ label: 'Preview' }).props.onPress(),
+  );
+  expect(device.current.config).toMatchObject({
+    ...controls,
+    effect: 'candle',
+    ledCount: 200,
+    paletteId: 'builtin:light-blue',
+  });
+  await act(async () =>
+    rendered.root
+      .findByProps({ accessibilityLabel: 'steady settings' })
+      .props.onPress(),
+  );
+  expect(
+    rendered.root.findByProps({ accessibilityLabel: 'brightness' }).props
+      .disabled,
+  ).toBe(false);
+  for (const key of ['speed', 'intensity', 'density'] as const) {
+    const slider = rendered.root.findByProps({ accessibilityLabel: key });
+    expect(slider.props.disabled).toBe(true);
+    await act(async () => slider.props.onValueChange(0));
+    expect(
+      rendered.root.findByProps({ accessibilityLabel: key }).props.value,
+    ).toBe(controls[key]);
+  }
+});
+test('LED count lives only in Device settings and its explicit save never restarts automatically', async () => {
+  const { device, command } = editableController();
+  await connectController();
+  await changeBrightness(47);
+  await openSettings('Device settings');
+  await act(async () =>
+    rendered.root
+      .findByProps({ accessibilityLabel: 'LED count' })
+      .props.onValueChange(351),
+  );
+  await act(async () =>
+    rendered.root
+      .findByProps({ label: 'Save lighting settings' })
+      .props.onPress(),
+  );
+  expect(device.current.config).toMatchObject({
+    ledCount: 350,
+    brightness: 47,
+  });
+  expect(device.current.activeLedCount).toBe(200);
+  expect(device.current.savedLedCount).toBe(350);
+  expect(device.current.savedRestartRequired).toBe(true);
+  expect(
+    rendered.root.findByProps({ testID: 'settings-status' }).props.children,
+  ).toBe('Saved. Restart for the LED count only.');
+  expect(command.mock.calls.map(([op]) => op)).toEqual([
+    'config',
+    'status',
+    'config.set',
+    'config.save',
+  ]);
+  await act(async () =>
+    rendered.root.findByProps({ label: 'Back to lights' }).props.onPress(),
+  );
+  expect(
+    rendered.root.findAllByProps({ accessibilityLabel: 'LED count' }),
+  ).toHaveLength(0);
+});
 test('RGB picker Done and Cancel stay local until the palette draft is explicitly Previewed or Saved', async () => {
   let current = configuration();
   const command = jest
@@ -972,6 +1418,7 @@ test('RGB picker Done and Cancel stay local until the palette draft is explicitl
   expect(
     rendered.root.findAllByProps({ accessibilityLabel: 'Palette colors' }),
   ).toHaveLength(0);
+  await openPalette();
   expect(
     rendered.root.findByProps({ label: 'Remove color 1' }).props.disabled,
   ).toBe(true);
@@ -1013,7 +1460,9 @@ test('RGB picker Done and Cancel stay local until the palette draft is explicitl
     rendered.root.findByProps({ label: 'Cancel' }).props.onPress(),
   );
   expect(color()).toBe('#ADD8E6');
-  expect(rendered.root.findAllByType(Modal)).toHaveLength(0);
+  expect(
+    rendered.root.findAllByProps({ testID: 'color-picker-modal' }),
+  ).toHaveLength(0);
   await act(async () =>
     rendered.root
       .findByProps({ accessibilityLabel: 'Edit color 1' })
@@ -1042,7 +1491,9 @@ test('RGB picker Done and Cancel stay local until the palette draft is explicitl
   expect(
     rendered.root.findByProps({ testID: 'operation-status' }).props.children,
   ).toContain('Use 1-32 ASCII characters for a name');
-  expect(rendered.root.findAllByProps({ label: 'Edit Night' })).toHaveLength(0);
+  expect(
+    rendered.root.findAllByProps({ accessibilityLabel: 'Edit Night' }),
+  ).toHaveLength(0);
   await act(async () =>
     rendered.root
       .findByProps({ accessibilityLabel: 'Palette name' })
@@ -1064,9 +1515,7 @@ test('RGB picker Done and Cancel stay local until the palette draft is explicitl
     'status',
     'config.set',
   ]);
-  await act(async () =>
-    rendered.root.findByProps({ label: 'Edit Night' }).props.onPress(),
-  );
+  await openPalette('Night');
   await act(async () =>
     rendered.root
       .findByProps({ accessibilityLabel: 'Edit color 1' })
@@ -1116,13 +1565,15 @@ test('adds a fifth chosen color, cancels additions and guards a sixth even if th
         : { ...healthFixture(), bootId: current.bootId },
     );
   await connectController();
-  await act(async () =>
-    rendered.root.findByProps({ label: 'Edit Porch' }).props.onPress(),
-  );
+  await openPalette('Porch');
   await act(async () =>
     rendered.root.findByProps({ label: 'Add color' }).props.onPress(),
   );
-  await act(async () => rendered.root.findByType(Modal).props.onRequestClose());
+  await act(async () =>
+    rendered.root
+      .findByProps({ testID: 'color-picker-modal' })
+      .props.onRequestClose(),
+  );
   expect(
     rendered.root.findAllByProps({ accessibilityLabel: 'Edit color 5' }),
   ).toHaveLength(0);
@@ -1149,7 +1600,9 @@ test('adds a fifth chosen color, cancels additions and guards a sixth even if th
   await act(async () =>
     rendered.root.findByProps({ label: 'Add color' }).props.onPress(),
   );
-  expect(rendered.root.findAllByType(Modal)).toHaveLength(0);
+  expect(
+    rendered.root.findAllByProps({ testID: 'color-picker-modal' }),
+  ).toHaveLength(0);
   expect(
     rendered.root.findAllByProps({ accessibilityLabel: 'Edit color 6' }),
   ).toHaveLength(0);
@@ -1176,6 +1629,7 @@ test('disconnecting closes the picker without applying or sending its unfinished
         : { ...healthFixture(), bootId: current.bootId },
     );
   await connectController();
+  await openPalette();
   await act(async () =>
     rendered.root
       .findByProps({ accessibilityLabel: 'Edit color 1' })
@@ -1192,11 +1646,13 @@ test('disconnecting closes the picker without applying or sending its unfinished
   );
   expect(rendered.root.findAllByType(Modal)).toHaveLength(0);
   expect(
-    rendered.root.findByProps({ accessibilityLabel: 'Edit color 1' }).props,
-  ).toMatchObject({
-    disabled: true,
-    accessibilityValue: { text: '#ADD8E6' },
-  });
+    rendered.root.findAllByProps({ accessibilityLabel: 'Edit color 1' }),
+  ).toHaveLength(0);
+  expect(
+    rendered.root.findByProps({
+      accessibilityLabel: 'Light blue color settings',
+    }).props.disabled,
+  ).toBe(true);
   expect(command.mock.calls.map(([op]) => op)).toEqual(['config', 'status']);
 });
 test.each([6, 8])(
@@ -1241,9 +1697,7 @@ test.each([6, 8])(
           .children,
       ).toContain('remove colors to 5 or fewer before Preview or Save');
     }
-    await act(async () =>
-      rendered.root.findByProps({ label: 'Edit Legacy' }).props.onPress(),
-    );
+    await openPalette('Legacy');
     expect(
       colors.map(
         (_, index) =>
@@ -1359,25 +1813,35 @@ test('disconnect retains authoritative values, discards drafts and never replays
         : { ...healthFixture(), bootId: current.bootId },
     );
   await connectController();
-  await act(async () =>
-    rendered.root
-      .findByProps({ accessibilityLabel: 'brightness' })
-      .props.onValueChange(90),
-  );
+  await changeBrightness(90);
   await openSettings('Connection');
   await act(async () =>
     rendered.root.findByProps({ label: 'Disconnect' }).props.onPress(),
   );
-  const brightness = rendered.root.findByProps({
-    accessibilityLabel: 'brightness',
-  });
-  expect(brightness.props.value).toBe(31);
-  expect(brightness.props.disabled).toBe(true);
+  expect(
+    rendered.root.findAllByProps({ testID: 'effect-settings-modal' }),
+  ).toHaveLength(0);
+  expect(
+    rendered.root.findByProps({ accessibilityLabel: 'twinkle settings' }).props
+      .disabled,
+  ).toBe(true);
   await act(async () =>
     rendered.root
       .findByProps({ label: 'Reconnect automatically' })
       .props.onPress(),
   );
+  await act(async () =>
+    rendered.root.findByProps({ label: 'Back to lights' }).props.onPress(),
+  );
+  await act(async () =>
+    rendered.root
+      .findByProps({ accessibilityLabel: 'twinkle settings' })
+      .props.onPress(),
+  );
+  const brightness = rendered.root.findByProps({
+    accessibilityLabel: 'brightness',
+  });
+  expect(brightness.props.value).toBe(31);
   expect(brightness.props.disabled).toBe(false);
   expect(command.mock.calls.map(([op]) => op)).toEqual([
     'config',
@@ -1416,6 +1880,7 @@ test.each([1, 333])(
         throw new Error(`Unexpected operation ${op}`);
       });
     await connectController();
+    await openSettings('Device settings');
     expect(
       rendered.root.findByProps({ accessibilityLabel: 'LED count' }).props,
     ).toMatchObject({
@@ -1424,16 +1889,15 @@ test.each([1, 333])(
       step: 25,
     });
     await act(async () =>
+      rendered.root.findByProps({ label: 'Back to lights' }).props.onPress(),
+    );
+    await act(async () =>
       rendered.root.findByProps({ label: 'Preview' }).props.onPress(),
     );
     expect(command.mock.calls.at(-1)?.[1]?.config).toMatchObject({
       ledCount,
     });
-    await act(async () =>
-      rendered.root
-        .findByProps({ accessibilityLabel: 'LED count' })
-        .props.onValueChange(351),
-    );
+    await changeLedCount(351);
     await act(async () =>
       rendered.root.findByProps({ label: 'Preview' }).props.onPress(),
     );
@@ -1457,11 +1921,7 @@ test('power warnings retain the active physical count while a smaller count awai
         },
   );
   await connectController();
-  await act(async () =>
-    rendered.root
-      .findByProps({ accessibilityLabel: 'LED count' })
-      .props.onValueChange(25),
-  );
+  await changeLedCount(25);
   expect(rendered.root.findByType(PowerNotice).props.count).toBe(900);
 });
 test.each(['success', 'storage failure', 'revision conflict', 'new boot'])(
@@ -1612,11 +2072,7 @@ test.each([
       });
     await connectController();
     if (countChanged) {
-      await act(async () => {
-        rendered.root
-          .findByProps({ accessibilityLabel: 'LED count' })
-          .props.onValueChange(333);
-      });
+      await changeLedCount(333);
     }
     const content = rendered.root.findByProps({
       testID: 'operation-status',

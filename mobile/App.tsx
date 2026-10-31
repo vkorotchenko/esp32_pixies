@@ -62,10 +62,35 @@ const PRESETS: Palette[] = [
     colors: ['#FF0000', '#FFFFFF', '#00FF00'],
   },
 ];
+const presetOverrideId = (id: string) =>
+  `preset-${id === 'builtin:light-blue' ? 'light-blue' : id}`;
+function presetOverride(preset: Palette, config: Config) {
+  const base = presetOverrideId(preset.id);
+  const matches = config.customPalettes.filter(
+    p =>
+      p.name === preset.name &&
+      (p.id === base ||
+        (p.id.startsWith(`${base}-`) &&
+          /^[1-9]\d*$/.test(p.id.slice(base.length + 1)))),
+  );
+  return matches.find(p => p.id === config.paletteId) ?? matches[0];
+}
+function availablePresetId(preset: Palette, palettes: Palette[]) {
+  const base = presetOverrideId(preset.id);
+  let id = base;
+  let suffix = 2;
+  while (palettes.some(p => p.id === id)) id = `${base}-${suffix++}`;
+  return id;
+}
+type EffectSettings = Pick<
+  Config,
+  'effect' | 'brightness' | 'speed' | 'intensity' | 'density'
+>;
 const sleep = (ms: number) =>
   new Promise<void>(resolve => setTimeout(resolve, ms));
 type ButtonProps = {
   label: string;
+  accessibilityLabel?: string;
   onPress: () => void;
   disabled?: boolean;
   selected?: boolean;
@@ -74,6 +99,7 @@ type ButtonProps = {
 };
 function Button({
   label,
+  accessibilityLabel,
   onPress,
   disabled,
   selected,
@@ -83,7 +109,9 @@ function Button({
   return (
     <Pressable
       accessibilityRole={role}
-      accessibilityLabel={attention ? `${label}, attention needed` : label}
+      accessibilityLabel={
+        accessibilityLabel || (attention ? `${label}, attention needed` : label)
+      }
       accessibilityState={{
         disabled,
         selected,
@@ -184,12 +212,29 @@ function Controller() {
   const [paletteId, setPaletteId] = useState<string | null>(null);
   const [paletteName, setPaletteName] = useState('');
   const [paletteColors, setPaletteColors] = useState(['#ADD8E6']);
+  const [paletteEditor, setPaletteEditor] = useState<{
+    preset: Palette | null;
+  } | null>(null);
+  const [paletteError, setPaletteError] = useState('');
+  const [effectEditor, setEffectEditor] = useState<EffectSettings | null>(null);
   const [colorPicker, setColorPicker] = useState<{
     index: number;
     color: string;
   } | null>(null);
   useEffect(() => {
     const listener = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (colorPicker) {
+        setColorPicker(null);
+        return true;
+      }
+      if (paletteEditor) {
+        setPaletteEditor(null);
+        return true;
+      }
+      if (effectEditor) {
+        setEffectEditor(null);
+        return true;
+      }
       if (menuOpen) {
         setMenuOpen(false);
         return true;
@@ -201,7 +246,7 @@ function Controller() {
       return false;
     });
     return () => listener.remove();
-  }, [menuOpen, tab]);
+  }, [menuOpen, tab, colorPicker, paletteEditor, effectEditor]);
   useEffect(() => {
     mounted.current = true;
     const scheduleReads = scheduleReadEpoch;
@@ -238,7 +283,7 @@ function Controller() {
         .catch(error => console.warn('Bluetooth cleanup failed:', error));
     };
   }, [bluetooth]);
-  async function run<T,>(
+  async function run<T>(
     work: () => Promise<T>,
     progressMessage = '',
     connection = false,
@@ -316,11 +361,7 @@ function Controller() {
     return health;
   }
   async function loadSchedule(sync = false, bootId = lastRead.current?.bootId) {
-    if (
-      !mounted.current ||
-      !connectedRef.current ||
-      !scheduleActive.current
-    )
+    if (!mounted.current || !connectedRef.current || !scheduleActive.current)
       return;
     if (!bootId) throw new Error('Reload the controller first.');
     const source = api();
@@ -345,7 +386,7 @@ function Controller() {
     );
     return value;
   }
-  async function scheduleWork<T,>(work: () => Promise<T>) {
+  async function scheduleWork<T>(work: () => Promise<T>) {
     const source = client.current;
     const epoch = scheduleReadEpoch.current;
     try {
@@ -437,6 +478,8 @@ function Controller() {
       );
       setMessage('');
       setColorPicker(null);
+      setPaletteEditor(null);
+      setEffectEditor(null);
       setPassword('');
       setWebsitePassword('');
     }
@@ -459,6 +502,8 @@ function Controller() {
         setConnected(null);
         setScheduleState(null);
         setColorPicker(null);
+        setPaletteEditor(null);
+        setEffectEditor(null);
         setDraft(lastRead.current?.config ?? DEFAULT_LIGHTS);
         setCount(
           String(lastRead.current?.config.ledCount ?? DEFAULT_LIGHTS.ledCount),
@@ -802,35 +847,53 @@ function Controller() {
       'Wi-Fi outcome is not confirmed. Refresh device status before retrying.',
     );
   }
-  function editPalette(palette: Palette) {
-    setPaletteId(palette.id);
-    setPaletteName(palette.name);
-    setPaletteColors([...palette.colors]);
+  function editPalette(palette?: Palette, preset: Palette | null = null) {
+    if (blocked) return;
+    setPaletteId(palette?.id ?? null);
+    setPaletteName(palette?.name ?? '');
+    setPaletteColors(palette ? [...palette.colors] : ['#ADD8E6']);
+    setPaletteEditor({ preset });
+    setPaletteError('');
     setColorPicker(null);
   }
+  function closePalette() {
+    setColorPicker(null);
+    setPaletteEditor(null);
+  }
   function keepPalette() {
-    if (blocked || colorPicker) {
+    if (blocked || colorPicker || !paletteEditor) {
       return;
     }
     if (paletteColors.length > MAX_PALETTE_COLORS) {
       setMessage('Remove colors to 5 or fewer, then update the palette draft.');
+      setPaletteError(
+        'Remove colors to 5 or fewer, then update the palette draft.',
+      );
       return;
     }
     const id = paletteId || `palette-${Date.now().toString(36)}`;
     const palette = {
       id,
-      name: paletteName,
-      colors: paletteColors,
+      name: paletteEditor.preset?.name ?? paletteName,
+      colors: [...paletteColors],
     };
     const current = draft.customPalettes.filter(p => p.id !== id);
     const next = {
       ...draft,
-      paletteId: id,
+      paletteId:
+        !paletteId ||
+        draft.paletteId === id ||
+        draft.paletteId === paletteEditor.preset?.id
+          ? id
+          : draft.paletteId,
       customPalettes: [...current, palette],
     };
     if (!isConfig(next)) {
       setMessage(
         'Use 1-32 ASCII characters for a name, 1-5 colors, and at most 10 palettes.',
+      );
+      setPaletteError(
+        'Use 1-32 ASCII characters for a name, 1-5 colors, and at most 10 palettes. Customized presets also count toward this limit.',
       );
       return;
     }
@@ -838,6 +901,7 @@ function Controller() {
     setPaletteId(null);
     setPaletteName('');
     setPaletteColors(['#ADD8E6']);
+    setPaletteEditor(null);
     setMessage(
       'Palette added to your draft. Preview or Save to send it to the ESP.',
     );
@@ -847,12 +911,22 @@ function Controller() {
     p => p.colors.length > MAX_PALETTE_COLORS,
   );
   const paletteBlocked = blocked || colorPicker !== null;
+  const draftBlocked =
+    paletteBlocked || paletteEditor !== null || effectEditor !== null;
   const hasEdits =
     draft &&
     state &&
     (JSON.stringify(draft) !== JSON.stringify(state.config) ||
       count !== String(state.config.ledCount));
   const estimateCount = Math.max(Number(count), state?.activeLedCount ?? 0);
+  const presets = PRESETS.map(preset => {
+    const override = presetOverride(preset, draft);
+    return {
+      preset,
+      palette: override ?? preset,
+      id: override?.id ?? availablePresetId(preset, draft.customPalettes),
+    };
+  });
   const lighting = (
     <View
       testID="lighting-controls"
@@ -887,74 +961,126 @@ function Controller() {
             ? 'Device preview is not saved'
             : 'Device settings loaded'}
         </Text>
-        <Text style={styles.label}>Theme</Text>
-        <View style={styles.row}>
-          {[...PRESETS, ...draft.customPalettes].map(p => (
-            <Button
-              key={p.id}
-              label={p.name}
-              selected={p.id === draft.paletteId}
-              disabled={blocked}
-              onPress={() => setDraft({ ...draft, paletteId: p.id })}
-            />
-          ))}
+        <Text accessibilityRole="header" style={styles.label}>
+          Presets
+        </Text>
+        {presets.map(({ preset, id, palette }) => {
+          return (
+            <View key={preset.id} style={styles.choiceRow}>
+              <View style={styles.choiceDetails}>
+                <Text style={styles.text}>{preset.name}</Text>
+                <View style={styles.row} accessibilityElementsHidden>
+                  {palette.colors.map((color, index) => (
+                    <View
+                      key={index}
+                      style={[styles.presetSwatch, { backgroundColor: color }]}
+                    />
+                  ))}
+                </View>
+              </View>
+              <View style={[styles.row, styles.choiceActions]}>
+                <Button
+                  label="Select"
+                  accessibilityLabel={`Select ${preset.name} preset`}
+                  selected={
+                    draft.paletteId === preset.id || draft.paletteId === id
+                  }
+                  disabled={blocked}
+                  onPress={() => {
+                    if (!blocked)
+                      setDraft(current => ({
+                        ...current,
+                        paletteId: palette.id,
+                      }));
+                  }}
+                />
+                <Button
+                  label="Settings"
+                  accessibilityLabel={`${preset.name} color settings`}
+                  disabled={blocked}
+                  onPress={() => editPalette({ ...palette, id }, preset)}
+                />
+              </View>
+            </View>
+          );
+        })}
+        <View style={styles.choiceRow}>
+          <Text accessibilityRole="header" style={styles.label}>
+            Effects
+          </Text>
+          <Button
+            label="+"
+            accessibilityLabel="Add custom palette"
+            disabled={blocked || draft.customPalettes.length >= 10}
+            onPress={() => {
+              if (!blocked && draft.customPalettes.length < 10) editPalette();
+            }}
+          />
         </View>
-        <Text style={styles.label}>Effect</Text>
-        <View style={styles.row}>
-          {EFFECTS.map(effect => (
-            <Button
-              key={effect}
-              label={effect}
-              selected={effect === draft.effect}
-              disabled={blocked}
-              onPress={() => setDraft({ ...draft, effect })}
-            />
-          ))}
-        </View>
-        {(['brightness', 'speed', 'intensity', 'density'] as const).map(key => (
-          <View key={key}>
-            <Text style={styles.label}>
-              {key}: {draft[key]}%
-            </Text>
-            <Slider
-              accessibilityLabel={key}
-              disabled={
-                blocked || (key !== 'brightness' && draft.effect === 'steady')
-              }
-              minimumValue={0}
-              maximumValue={100}
-              step={1}
-              value={draft[key]}
-              minimumTrackTintColor="#7dd3fc"
-              maximumTrackTintColor="#475569"
-              onValueChange={value =>
-                setDraft(current => ({ ...current, [key]: Math.round(value) }))
-              }
-            />
+        {EFFECTS.map(effect => (
+          <View key={effect} style={styles.choiceRow}>
+            <Text style={[styles.text, styles.choiceDetails]}>{effect}</Text>
+            <View style={[styles.row, styles.choiceActions]}>
+              <Button
+                label="Select"
+                accessibilityLabel={`Select ${effect} effect`}
+                selected={effect === draft.effect}
+                disabled={blocked}
+                onPress={() => {
+                  if (!blocked) setDraft(current => ({ ...current, effect }));
+                }}
+              />
+              <Button
+                label="Settings"
+                accessibilityLabel={`${effect} settings`}
+                disabled={blocked}
+                onPress={() => {
+                  if (!blocked)
+                    setEffectEditor({
+                      effect,
+                      brightness: draft.brightness,
+                      speed: draft.speed,
+                      intensity: draft.intensity,
+                      density: draft.density,
+                    });
+                }}
+              />
+            </View>
           </View>
         ))}
-        <Text style={styles.label}>LED count: {count}</Text>
-        <Slider
-          accessibilityLabel="LED count"
-          disabled={blocked}
-          minimumValue={25}
-          maximumValue={1000}
-          step={25}
-          value={sliderCount(Number(count))}
-          minimumTrackTintColor="#7dd3fc"
-          maximumTrackTintColor="#475569"
-          onValueChange={value => setCount(String(sliderCount(value)))}
-        />
-        {Number(count) % 25 !== 0 || Number(count) < 25 ? (
-          <Text style={styles.text}>
-            Existing count {count} is unchanged. Moving the slider selects
-            25-LED increments.
-          </Text>
-        ) : null}
+        <Text style={styles.label}>Custom palettes</Text>
+        {draft.customPalettes
+          .filter(p => !presets.some(row => p.id === row.palette.id))
+          .map(p => (
+            <View key={p.id} style={styles.choiceRow}>
+              <Text style={[styles.text, styles.choiceDetails]}>{p.name}</Text>
+              <View style={[styles.row, styles.choiceActions]}>
+                <Button
+                  label="Select"
+                  accessibilityLabel={`Select ${p.name} palette`}
+                  selected={p.id === draft.paletteId}
+                  disabled={blocked}
+                  onPress={() => {
+                    if (!blocked)
+                      setDraft(current => ({ ...current, paletteId: p.id }));
+                  }}
+                />
+                <Button
+                  label="Settings"
+                  accessibilityLabel={`Edit ${p.name}`}
+                  disabled={blocked}
+                  onPress={() => editPalette(p)}
+                />
+              </View>
+            </View>
+          ))}
         <Text style={styles.text}>
-          Active: {state?.activeLedCount ?? 'not read'}. Only LED-count changes
-          need Save, then Restart. Other lighting settings do not need a
-          restart.
+          {draft.customPalettes.length}/10 customized palettes, including preset
+          colors. Use + to add a custom palette.
+        </Text>
+        <Text style={styles.text}>
+          LED count and Restart are in Device settings. Other lighting settings
+          do not need a restart.
         </Text>
         <PowerNotice
           profile={deviceStatus?.power}
@@ -972,12 +1098,12 @@ function Controller() {
         <View style={styles.row}>
           <Button
             label="Preview"
-            disabled={paletteBlocked || oversizedPalettes.length > 0}
+            disabled={draftBlocked || oversizedPalettes.length > 0}
             onPress={() => run(() => preview(false))}
           />
           <Button
             label="Save"
-            disabled={paletteBlocked || oversizedPalettes.length > 0}
+            disabled={draftBlocked || oversizedPalettes.length > 0}
             onPress={() => run(() => preview(true), 'Saving...')}
           />
           <Button
@@ -995,109 +1121,6 @@ function Controller() {
             }
           />
         </View>
-      </Card>
-      <Card title="Custom palettes">
-        {draft.customPalettes.map(p => (
-          <View key={p.id} style={styles.row}>
-            <Button
-              label={`Edit ${p.name}`}
-              disabled={paletteBlocked}
-              onPress={() => editPalette(p)}
-            />
-            <Button
-              label={`Delete ${p.name}`}
-              disabled={paletteBlocked}
-              onPress={() =>
-                setDraft({
-                  ...draft,
-                  paletteId:
-                    draft.paletteId === p.id ? 'halloween' : draft.paletteId,
-                  customPalettes: draft.customPalettes.filter(
-                    item => item.id !== p.id,
-                  ),
-                })
-              }
-            />
-          </View>
-        ))}
-        <Text style={styles.text}>
-          {draft.customPalettes.length}/10 palettes. Changes remain a draft
-          until Preview or Save.
-        </Text>
-        <Input
-          accessibilityLabel="Palette name"
-          placeholder="Palette name"
-          editable={!paletteBlocked}
-          maxLength={32}
-          value={paletteName}
-          onChangeText={setPaletteName}
-        />
-        <Text style={styles.text}>
-          {paletteColors.length}/{MAX_PALETTE_COLORS} colors. Tap a color to
-          choose it. Keep at least one color.
-        </Text>
-        {paletteColors.length > MAX_PALETTE_COLORS && (
-          <Text accessibilityRole="alert" style={styles.text}>
-            All existing colors are shown. Remove colors to 5 or fewer to update
-            this palette draft; nothing is removed automatically.
-          </Text>
-        )}
-        {paletteColors.map((color, index) => (
-          <View key={index} style={styles.row}>
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel={`Edit color ${index + 1}`}
-              accessibilityValue={{ text: color }}
-              accessibilityState={{
-                disabled: paletteBlocked,
-                selected: colorPicker?.index === index,
-              }}
-              disabled={paletteBlocked}
-              onPress={() => {
-                if (!paletteBlocked) setColorPicker({ index, color });
-              }}
-              style={[
-                styles.button,
-                styles.colorButton,
-                colorPicker?.index === index && styles.selected,
-                paletteBlocked && styles.disabled,
-              ]}
-            >
-              <View style={[styles.swatch, { backgroundColor: color }]} />
-              <Text style={styles.buttonText}>Color {index + 1}</Text>
-            </Pressable>
-            <Button
-              label={`Remove color ${index + 1}`}
-              disabled={paletteBlocked || paletteColors.length <= 1}
-              onPress={() => {
-                if (!paletteBlocked && paletteColors.length > 1) {
-                  setPaletteColors(colors =>
-                    colors.filter((_, i) => i !== index),
-                  );
-                }
-              }}
-            />
-          </View>
-        ))}
-        <Button
-          label="Add color"
-          disabled={
-            paletteBlocked || paletteColors.length >= MAX_PALETTE_COLORS
-          }
-          onPress={() => {
-            if (!paletteBlocked && paletteColors.length < MAX_PALETTE_COLORS) {
-              setColorPicker({
-                index: paletteColors.length,
-                color: '#ADD8E6',
-              });
-            }
-          }}
-        />
-        <Button
-          label={paletteId ? 'Update palette draft' : 'Add palette draft'}
-          disabled={paletteBlocked || paletteColors.length > MAX_PALETTE_COLORS}
-          onPress={keepPalette}
-        />
       </Card>
     </View>
   );
@@ -1482,6 +1505,37 @@ function Controller() {
               )}
               {tab === 'Device' && (
                 <Card title="Device">
+                  <Text style={styles.label}>LED count: {count}</Text>
+                  <Slider
+                    accessibilityLabel="LED count"
+                    disabled={blocked}
+                    minimumValue={25}
+                    maximumValue={1000}
+                    step={25}
+                    value={sliderCount(Number(count))}
+                    minimumTrackTintColor="#7dd3fc"
+                    maximumTrackTintColor="#475569"
+                    onValueChange={value => {
+                      if (!blocked) setCount(String(sliderCount(value)));
+                    }}
+                  />
+                  {Number(count) % 25 !== 0 || Number(count) < 25 ? (
+                    <Text style={styles.text}>
+                      Existing count {count} is unchanged. Moving the slider
+                      selects 25-LED increments.
+                    </Text>
+                  ) : null}
+                  <Text style={styles.text}>
+                    Active: {state?.activeLedCount ?? 'not read'}. Save lighting
+                    settings keeps the whole lighting draft, including this
+                    count. Only LED-count changes need a manual Restart
+                    afterward.
+                  </Text>
+                  <Button
+                    label="Save lighting settings"
+                    disabled={draftBlocked || oversizedPalettes.length > 0}
+                    onPress={() => run(() => preview(true), 'Saving...')}
+                  />
                   <PowerSettings
                     key={`${deviceStatus?.bootId}:${deviceStatus?.power?.revision}`}
                     profile={deviceStatus?.power}
@@ -1611,8 +1665,243 @@ function Controller() {
           </ScrollView>
         </View>
       </View>
+      {paletteEditor && (
+        <Modal
+          testID="palette-settings-modal"
+          transparent
+          onRequestClose={closePalette}
+        >
+          <View style={styles.pickerOverlay}>
+            <SafeAreaView
+              style={styles.pickerSheet}
+              accessibilityViewIsModal
+              accessibilityElementsHidden={colorPicker !== null}
+              onAccessibilityEscape={closePalette}
+            >
+              <ScrollView
+                keyboardShouldPersistTaps="handled"
+                contentContainerStyle={styles.card}
+              >
+                <Text accessibilityRole="header" style={styles.title}>
+                  {paletteEditor.preset
+                    ? `${paletteEditor.preset.name} colors`
+                    : paletteId
+                    ? 'Edit custom palette'
+                    : 'New custom palette'}
+                </Text>
+                {!paletteEditor.preset && (
+                  <Input
+                    accessibilityLabel="Palette name"
+                    placeholder="Palette name"
+                    editable={!paletteBlocked}
+                    maxLength={32}
+                    value={paletteName}
+                    onChangeText={setPaletteName}
+                  />
+                )}
+                <Text style={styles.text}>
+                  {paletteColors.length}/{MAX_PALETTE_COLORS} colors. Tap a
+                  color to choose it. Keep at least one color. Changes stay
+                  local until you update the draft, then Preview or Save.
+                </Text>
+                {paletteError && (
+                  <Text accessibilityRole="alert" style={styles.text}>
+                    {paletteError}
+                  </Text>
+                )}
+                {paletteColors.length > MAX_PALETTE_COLORS && (
+                  <Text accessibilityRole="alert" style={styles.text}>
+                    All existing colors are shown. Remove colors to 5 or fewer
+                    to update this palette draft; nothing is removed
+                    automatically.
+                  </Text>
+                )}
+                {paletteColors.map((color, index) => (
+                  <View key={index} style={styles.row}>
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityLabel={`Edit color ${index + 1}`}
+                      accessibilityValue={{ text: color }}
+                      accessibilityState={{
+                        disabled: paletteBlocked,
+                        selected: colorPicker?.index === index,
+                      }}
+                      disabled={paletteBlocked}
+                      onPress={() => {
+                        if (!paletteBlocked) setColorPicker({ index, color });
+                      }}
+                      style={[
+                        styles.button,
+                        styles.colorButton,
+                        colorPicker?.index === index && styles.selected,
+                        paletteBlocked && styles.disabled,
+                      ]}
+                    >
+                      <View
+                        style={[styles.swatch, { backgroundColor: color }]}
+                      />
+                      <Text style={styles.buttonText}>Color {index + 1}</Text>
+                    </Pressable>
+                    <Button
+                      label={`Remove color ${index + 1}`}
+                      disabled={paletteBlocked || paletteColors.length <= 1}
+                      onPress={() => {
+                        if (!paletteBlocked && paletteColors.length > 1) {
+                          setPaletteColors(colors =>
+                            colors.filter((_, i) => i !== index),
+                          );
+                        }
+                      }}
+                    />
+                  </View>
+                ))}
+                <Button
+                  label="Add color"
+                  disabled={
+                    paletteBlocked || paletteColors.length >= MAX_PALETTE_COLORS
+                  }
+                  onPress={() => {
+                    if (
+                      !paletteBlocked &&
+                      paletteColors.length < MAX_PALETTE_COLORS
+                    ) {
+                      setColorPicker({
+                        index: paletteColors.length,
+                        color: '#ADD8E6',
+                      });
+                    }
+                  }}
+                />
+                <Button
+                  label={
+                    paletteEditor.preset
+                      ? 'Apply preset colors'
+                      : paletteId
+                      ? 'Update palette draft'
+                      : 'Add palette draft'
+                  }
+                  disabled={
+                    paletteBlocked || paletteColors.length > MAX_PALETTE_COLORS
+                  }
+                  onPress={keepPalette}
+                />
+                {paletteId && !paletteEditor.preset && (
+                  <Button
+                    label="Delete palette draft"
+                    disabled={paletteBlocked}
+                    onPress={() => {
+                      if (paletteBlocked) return;
+                      setDraft(current => ({
+                        ...current,
+                        paletteId:
+                          current.paletteId === paletteId
+                            ? 'halloween'
+                            : current.paletteId,
+                        customPalettes: current.customPalettes.filter(
+                          p => p.id !== paletteId,
+                        ),
+                      }));
+                      setPaletteEditor(null);
+                      setMessage(
+                        'Palette removed from your draft. Preview or Save to send it to the ESP.',
+                      );
+                    }}
+                  />
+                )}
+                <Button label="Cancel palette" onPress={closePalette} />
+              </ScrollView>
+            </SafeAreaView>
+          </View>
+        </Modal>
+      )}
+      {effectEditor && (
+        <Modal
+          testID="effect-settings-modal"
+          transparent
+          onRequestClose={() => setEffectEditor(null)}
+        >
+          <View style={styles.pickerOverlay}>
+            <SafeAreaView
+              style={styles.pickerSheet}
+              accessibilityViewIsModal
+              onAccessibilityEscape={() => setEffectEditor(null)}
+            >
+              <ScrollView
+                keyboardShouldPersistTaps="handled"
+                contentContainerStyle={styles.card}
+              >
+                <Text accessibilityRole="header" style={styles.title}>
+                  {effectEditor.effect} settings
+                </Text>
+                {(['brightness', 'speed', 'intensity', 'density'] as const).map(
+                  key => (
+                    <View key={key}>
+                      <Text style={styles.label}>
+                        {key}: {effectEditor[key]}%
+                      </Text>
+                      <Slider
+                        accessibilityLabel={key}
+                        disabled={
+                          blocked ||
+                          (key !== 'brightness' &&
+                            effectEditor.effect === 'steady')
+                        }
+                        minimumValue={0}
+                        maximumValue={100}
+                        step={1}
+                        value={effectEditor[key]}
+                        minimumTrackTintColor="#7dd3fc"
+                        maximumTrackTintColor="#475569"
+                        onValueChange={value => {
+                          if (
+                            blocked ||
+                            (key !== 'brightness' &&
+                              effectEditor.effect === 'steady')
+                          )
+                            return;
+                          setEffectEditor(current =>
+                            current
+                              ? { ...current, [key]: Math.round(value) }
+                              : null,
+                          );
+                        }}
+                      />
+                    </View>
+                  ),
+                )}
+                <Text style={styles.text}>
+                  Apply selects this effect and its controls in the lighting
+                  draft. Preview or Save sends the draft to the ESP.
+                </Text>
+                <View style={styles.row}>
+                  <Button
+                    label="Apply effect draft"
+                    disabled={blocked}
+                    onPress={() => {
+                      if (blocked) return;
+                      setDraft(current => ({ ...current, ...effectEditor }));
+                      setEffectEditor(null);
+                      setMessage(
+                        'Effect settings updated in your draft. Preview or Save to send it to the ESP.',
+                      );
+                    }}
+                  />
+                  <Button
+                    label="Cancel effect settings"
+                    onPress={() => setEffectEditor(null)}
+                  />
+                </View>
+              </ScrollView>
+            </SafeAreaView>
+          </View>
+        </Modal>
+      )}
       {colorPicker && (
-        <Modal transparent onRequestClose={() => setColorPicker(null)}>
+        <Modal
+          testID="color-picker-modal"
+          transparent
+          onRequestClose={() => setColorPicker(null)}
+        >
           <View style={styles.pickerOverlay}>
             <SafeAreaView
               style={styles.pickerSheet}
@@ -1763,6 +2052,22 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   lighting: { gap: 14 },
+  choiceRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+  },
+  choiceDetails: { flexGrow: 1, minWidth: 90, gap: 6 },
+  choiceActions: { marginLeft: 'auto' },
+  presetSwatch: {
+    width: 16,
+    height: 16,
+    borderRadius: 4,
+    borderWidth: 1,
+    borderColor: '#94a3b8',
+  },
   hidden: { display: 'none' },
   invisible: { opacity: 0 },
   buttonContent: { flexDirection: 'row', gap: 8, alignItems: 'center' },
