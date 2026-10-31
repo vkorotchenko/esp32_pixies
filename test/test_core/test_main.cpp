@@ -107,8 +107,8 @@ void effects_power() {
   auto p=render(s,0,frame.data(),1000,9000);
   TEST_ASSERT_TRUE(p.limited); TEST_ASSERT_EQUAL(61000,p.requestedMa);
   s.effect=Effect::Breathe;
-  render(s,0,frame.data(),1,9000); const auto dim=frame[0];
-  render(s,1325,frame.data(),1,9000); TEST_ASSERT_GREATER_THAN(dim.r,frame[0].r);
+  render(s,0,frame.data(),2,9000); const auto dim=frame[0];
+  render(s,1325,frame.data(),2,9000); TEST_ASSERT_GREATER_THAN(dim.r,frame[0].r);
   for(unsigned e=0;e<5;++e) for(unsigned brightness:{0,100}) for(unsigned speed:{0,100})
     for(unsigned density:{0,100}) for(unsigned intensity:{0,100}) {
       s.effect=Effect(e); s.brightness=brightness; s.speed=speed; s.density=density; s.intensity=intensity;
@@ -125,6 +125,52 @@ void effects_power() {
   TEST_ASSERT_EQUAL_UINT64(20,clock.advance(10));
   TEST_ASSERT_EQUAL_UINT64(30,clock.advance(20));
   TEST_ASSERT_TRUE(elapsed(10,UINT32_MAX-9,20));
+}
+size_t lit_pixels(const Rgb* frame,size_t count) {
+  size_t lit=0;
+  for(size_t i=0;i<count;++i) if(!(frame[i]==Rgb{})) ++lit;
+  return lit;
+}
+void patterns_limit_lit_pixels_except_steady() {
+  Settings s; s.brightness=100;
+  std::array<Rgb,kMaxLeds> frame{};
+  for(unsigned effect=0;effect<5;++effect) for(unsigned count:{1,2,3,25,199,200,201,1000})
+    for(unsigned speed:{0,100}) for(unsigned intensity:{0,100}) for(unsigned density:{0,100}) {
+      s.effect=Effect(effect); s.speed=speed; s.intensity=intensity; s.density=density;
+      const uint64_t period=300U+(100U-s.speed)*47U;
+      for(uint64_t time:{uint64_t(0),period/2,period-1,period,period*2-1,period*2,
+                         uint64_t(UINT32_MAX)+1,uint64_t(UINT64_MAX)}) {
+        render(s,time,frame.data(),count,90000);
+        const size_t lit=lit_pixels(frame.data(),count);
+        if(s.effect==Effect::Steady) TEST_ASSERT_EQUAL(count,lit);
+        else TEST_ASSERT_LESS_OR_EQUAL(count/2,lit);
+      }
+    }
+}
+void twinkle_alternates_every_other_pixel() {
+  Settings s; s.brightness=100;
+  std::array<Rgb,200> frame{};
+  for(unsigned speed:{0,50,100}) {
+    s.speed=speed;
+    const uint64_t period=300U+(100U-s.speed)*47U;
+    for(unsigned cycle=0;cycle<4;++cycle) for(uint64_t offset:{uint64_t(0),period/2,period-1}) {
+      render(s,cycle*period+offset,frame.data(),frame.size(),90000);
+      TEST_ASSERT_EQUAL(100,lit_pixels(frame.data(),frame.size()));
+      for(size_t i=0;i<frame.size();++i)
+        TEST_ASSERT_EQUAL(i%2==cycle%2,!(frame[i]==Rgb{}));
+    }
+  }
+}
+void odd_pattern_counts_rotate_the_unlit_spare() {
+  Settings s; s.effect=Effect::Breathe; s.brightness=100;
+  std::array<Rgb,5> frame{};
+  std::array<bool,5> seen{};
+  for(unsigned cycle=0;cycle<5;++cycle) {
+    render(s,cycle*2650ULL+1325,frame.data(),frame.size(),90000);
+    TEST_ASSERT_EQUAL(2,lit_pixels(frame.data(),frame.size()));
+    for(size_t i=0;i<frame.size();++i) seen[i]=seen[i]||!(frame[i]==Rgb{});
+  }
+  for(bool lit:seen) TEST_ASSERT_TRUE(lit);
 }
 void configurable_power_budget_and_calibrated_limits() {
   PowerSettings profile; const char* field;
@@ -235,7 +281,9 @@ void login_throttling() {
 }
 int main() {
   UNITY_BEGIN(); RUN_TEST(clean_defaults_preserve_saved_choices); RUN_TEST(lengths); RUN_TEST(palettes); RUN_TEST(settings_json);
-  RUN_TEST(persistence_rules); RUN_TEST(effects_power); RUN_TEST(configurable_power_budget_and_calibrated_limits); RUN_TEST(decisions);
+  RUN_TEST(persistence_rules); RUN_TEST(effects_power); RUN_TEST(patterns_limit_lit_pixels_except_steady);
+  RUN_TEST(twinkle_alternates_every_other_pixel); RUN_TEST(odd_pattern_counts_rotate_the_unlit_spare);
+  RUN_TEST(configurable_power_budget_and_calibrated_limits); RUN_TEST(decisions);
   RUN_TEST(corrupt_records_and_images); RUN_TEST(login_throttling);
   return UNITY_END();
 }

@@ -231,6 +231,11 @@ Range/shape rules:
 - Steady ignores speed/intensity/density; breathe uses speed; twinkle/candle/chase
   use all three. Higher speed is faster. Intensity is modulation depth; density
   is percentage of active/modulated positions. Candle noise is interpolated.
+- Non-Steady effects light at most `floor(activeLedCount / 2)` LEDs per frame.
+  Every-other-LED groups alternate each speed-controlled cycle; odd counts
+  rotate the extra unlit position so no LED is permanently excluded.
+  Steady can light the full active string. Brightness and power limits remain
+  unchanged for every effect.
 
 `POST /api/save` body `{"baseRevision":2}` persists the complete current preview.
 No implicit Save during sliders, network changes, OTA or restart. After a
