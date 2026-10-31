@@ -774,12 +774,10 @@ test('Schedule saves use the editor base, block remote conflicts, and settle the
       .disabled,
   ).toBe(true);
   await act(async () =>
-    rendered.root
-      .findByType(ScheduleScreen)
-      .props.onSave(schedule.schedule, {
-        bootId: schedule.bootId,
-        revision: 1,
-      }),
+    rendered.root.findByType(ScheduleScreen).props.onSave(schedule.schedule, {
+      bootId: schedule.bootId,
+      revision: 1,
+    }),
   );
   expect(
     command.mock.calls.filter(([op]) => op === 'schedule.save'),
@@ -1204,6 +1202,72 @@ test.each([false, true])(
     }
   },
 );
+test('preset overrides preserve unrelated custom palettes that already use a preset ID', async () => {
+  const initial = configuration();
+  const porch = { id: 'preset-halloween', name: 'Porch', colors: ['#123456'] };
+  initial.config.customPalettes = [porch];
+  initial.config.paletteId = porch.id;
+  const { device } = editableController(initial);
+  await connectController();
+  expect(
+    rendered.root.findByProps({ accessibilityLabel: 'Edit Porch' }),
+  ).toBeDefined();
+  await act(async () =>
+    rendered.root
+      .findByProps({ accessibilityLabel: 'Halloween color settings' })
+      .props.onPress(),
+  );
+  expect(
+    rendered.root.findByProps({ accessibilityLabel: 'Edit color 1' }).props
+      .accessibilityValue.text,
+  ).toBe('#00FF00');
+  await act(async () =>
+    rendered.root
+      .findByProps({ accessibilityLabel: 'Edit color 1' })
+      .props.onPress(),
+  );
+  await act(async () =>
+    rendered.root
+      .findByProps({ accessibilityLabel: 'Red channel' })
+      .props.onValueChange(18),
+  );
+  await act(async () =>
+    rendered.root.findByProps({ label: 'Done' }).props.onPress(),
+  );
+  await act(async () =>
+    rendered.root.findByProps({ label: 'Apply preset colors' }).props.onPress(),
+  );
+  await act(async () =>
+    rendered.root.findByProps({ label: 'Save' }).props.onPress(),
+  );
+  expect(device.current.config.customPalettes).toEqual([
+    porch,
+    {
+      id: 'preset-halloween-2',
+      name: 'Halloween',
+      colors: ['#12FF00', '#FFA500'],
+    },
+  ]);
+  expect(device.current.config.paletteId).toBe(porch.id);
+  await act(async () =>
+    rendered.root
+      .findByProps({ accessibilityLabel: 'Select Halloween preset' })
+      .props.onPress(),
+  );
+  await act(async () =>
+    rendered.root.findByProps({ label: 'Preview' }).props.onPress(),
+  );
+  expect(device.current.config.paletteId).toBe('preset-halloween-2');
+  await act(async () =>
+    rendered.root
+      .findByProps({ accessibilityLabel: 'Halloween color settings' })
+      .props.onPress(),
+  );
+  expect(
+    rendered.root.findByProps({ accessibilityLabel: 'Edit color 1' }).props
+      .accessibilityValue.text,
+  ).toBe('#12FF00');
+});
 test('effect settings keep all four sliders in a cancelable popup and apply only an explicit effect draft', async () => {
   const { device, command } = editableController();
   await connectController();

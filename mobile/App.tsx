@@ -64,6 +64,24 @@ const PRESETS: Palette[] = [
 ];
 const presetOverrideId = (id: string) =>
   `preset-${id === 'builtin:light-blue' ? 'light-blue' : id}`;
+function presetOverride(preset: Palette, config: Config) {
+  const base = presetOverrideId(preset.id);
+  const matches = config.customPalettes.filter(
+    p =>
+      p.name === preset.name &&
+      (p.id === base ||
+        (p.id.startsWith(`${base}-`) &&
+          /^[1-9]\d*$/.test(p.id.slice(base.length + 1)))),
+  );
+  return matches.find(p => p.id === config.paletteId) ?? matches[0];
+}
+function availablePresetId(preset: Palette, palettes: Palette[]) {
+  const base = presetOverrideId(preset.id);
+  let id = base;
+  let suffix = 2;
+  while (palettes.some(p => p.id === id)) id = `${base}-${suffix++}`;
+  return id;
+}
 type EffectSettings = Pick<
   Config,
   'effect' | 'brightness' | 'speed' | 'intensity' | 'density'
@@ -901,6 +919,14 @@ function Controller() {
     (JSON.stringify(draft) !== JSON.stringify(state.config) ||
       count !== String(state.config.ledCount));
   const estimateCount = Math.max(Number(count), state?.activeLedCount ?? 0);
+  const presets = PRESETS.map(preset => {
+    const override = presetOverride(preset, draft);
+    return {
+      preset,
+      palette: override ?? preset,
+      id: override?.id ?? availablePresetId(preset, draft.customPalettes),
+    };
+  });
   const lighting = (
     <View
       testID="lighting-controls"
@@ -938,9 +964,7 @@ function Controller() {
         <Text accessibilityRole="header" style={styles.label}>
           Presets
         </Text>
-        {PRESETS.map(preset => {
-          const id = presetOverrideId(preset.id);
-          const palette = draft.customPalettes.find(p => p.id === id) ?? preset;
+        {presets.map(({ preset, id, palette }) => {
           return (
             <View key={preset.id} style={styles.choiceRow}>
               <View style={styles.choiceDetails}>
@@ -1026,9 +1050,7 @@ function Controller() {
         ))}
         <Text style={styles.label}>Custom palettes</Text>
         {draft.customPalettes
-          .filter(
-            p => !PRESETS.some(preset => p.id === presetOverrideId(preset.id)),
-          )
+          .filter(p => !presets.some(row => p.id === row.palette.id))
           .map(p => (
             <View key={p.id} style={styles.choiceRow}>
               <Text style={[styles.text, styles.choiceDetails]}>{p.name}</Text>
