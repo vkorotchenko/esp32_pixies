@@ -1,6 +1,7 @@
 import { Buffer } from 'buffer';
 import { frames, Receiver, TIMEOUT } from './protocol';
 import { record } from './model';
+import { isSchedule, ScheduleV1, scheduleResponse } from './schedule';
 export interface Link {
   mtu: number;
   write(frame: Buffer): Promise<void>;
@@ -14,6 +15,7 @@ interface Pending {
   resolve(value: unknown): void;
   reject(error: Error): void;
   timer: ReturnType<typeof setTimeout>;
+  boundedSchedule: boolean;
 }
 export class DeviceError extends Error {
   constructor(public readonly code: string, message: string) {
@@ -40,6 +42,27 @@ export class PixiesClient {
         'Bluetooth disconnected. Reload device state after reconnecting.',
       ),
     );
+  }
+  async getSchedule() {
+    return scheduleResponse(await this.command('schedule.get'));
+  }
+  async saveSchedule(
+    bootId: string,
+    baseRevision: number,
+    schedule: ScheduleV1,
+  ) {
+    if (!isSchedule(schedule)) throw new Error('Invalid weekly schedule.');
+    return scheduleResponse(
+      await this.command('schedule.save', { bootId, baseRevision, schedule }),
+    );
+  }
+  async syncClock(bootId: string, utcSeconds: number) {
+    return scheduleResponse(
+      await this.command('clock.sync', { bootId, utcSeconds }),
+    );
+  }
+  async resumeSchedule(bootId: string) {
+    return scheduleResponse(await this.command('schedule.resume', { bootId }));
   }
   private fail(error: Error): void {
     const pending = this.pending;
@@ -84,6 +107,12 @@ export class PixiesClient {
         ) {
           throw new Error('Malformed Bluetooth error response.');
         }
+        if (
+          this.pending.boundedSchedule &&
+          Buffer.byteLength(JSON.stringify(reply.body), 'utf8') > 4096
+        ) {
+          throw new Error('Schedule response exceeds 4096 bytes.');
+        }
         throw new DeviceError(error.code, error.message);
       }
       const pending = this.pending;
@@ -119,6 +148,12 @@ export class PixiesClient {
     );
     let packets: Buffer[];
     try {
+      if (
+        /^(schedule\.|clock\.sync$|lights\.set$)/.test(op) &&
+        bytes.length > 4096
+      ) {
+        throw new Error('Schedule command exceeds 4096 bytes.');
+      }
       packets = frames(bytes, id, this.link.mtu);
     } finally {
       bytes.fill(0);
@@ -135,6 +170,7 @@ export class PixiesClient {
       );
       this.pending = {
         id,
+        boundedSchedule: /^(schedule\.|clock\.sync$|lights\.set$)/.test(op),
         resolve,
         reject,
         timer,

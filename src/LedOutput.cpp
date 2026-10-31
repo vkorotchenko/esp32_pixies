@@ -18,10 +18,10 @@ bool LedOutput::begin(uint16_t count) {
   bus_->Begin(); bus_->ClearTo(RgbColor(0)); bus_->Show();
   clock_.reset(millis()); ready=true; return true;
 }
-void LedOutput::tick(const pixies::Settings& s,uint32_t now) {
+void LedOutput::tick(const pixies::Settings& s,uint32_t now,bool effectiveOn) {
   if(!ready||paused_||!pixies::elapsed(now,lastFrame_,33)||!bus_->CanShow()) return;
   lastFrame_=now;
-  power=pixies::render(s,clock_.advance(now),frame_,count_,powerBudgetMa(),powerSettings.ledMilliWatts);
+  power=pixies::render(s,effectiveOn,clock_.advance(now),frame_,count_,powerBudgetMa(),powerSettings.ledMilliWatts);
   for(uint16_t i=0;i<count_;++i) bus_->SetPixelColor(i,RgbColor(frame_[i].r,frame_[i].g,frame_[i].b));
   bus_->Show(); ++frames;
 }

@@ -20,6 +20,8 @@ import {
 import { latestRelease, NoPublishedRelease } from '../src/releases';
 import { UpdatePanel } from '../src/UpdatePanel';
 import { PowerNotice } from '../src/PowerSettings';
+import { ScheduleScreen } from '../src/ScheduleScreen';
+import { scheduleFixture } from '../testFixtures/schedule';
 jest.mock('react-native-file-access', () => ({
   Dirs: { CacheDir: '/cache' },
   FileSystem: {},
@@ -62,6 +64,10 @@ const lifecycle = new Set<(state: AppStateStatus) => void>();
 beforeEach(() => {
   unmounted = false;
   lifecycle.clear();
+  Object.defineProperty(AppState, 'currentState', {
+    configurable: true,
+    value: 'active',
+  });
   jest
     .spyOn(AppState, 'addEventListener')
     .mockImplementation((_event, listener) => {
@@ -89,6 +95,7 @@ afterEach(async () => {
   if (!unmounted) {
     await act(async () => rendered.unmount());
   }
+  jest.useRealTimers();
   jest.restoreAllMocks();
 });
 function expectHome() {
@@ -159,9 +166,9 @@ test('opens the full disabled Lights form immediately with settings hidden behin
   expect(rendered.root.findByProps({ label: 'Save' }).props.disabled).toBe(
     true,
   );
-  expect(
-    rendered.root.findByProps({ label: 'Add color' }).props.disabled,
-  ).toBe(true);
+  expect(rendered.root.findByProps({ label: 'Add color' }).props.disabled).toBe(
+    true,
+  );
   expect(
     rendered.root.findByProps({ accessibilityLabel: 'Edit color 1' }).props
       .disabled,
@@ -261,6 +268,448 @@ test('reconnects the remembered native ID without scanning or switching away fro
   expect(mockScan).not.toHaveBeenCalled();
   expect(command.mock.calls.map(([op]) => op)).toEqual(['config', 'status']);
   expectHome();
+});
+test('old controller Schedule tab is feature-local unsupported and opens Updates without disconnecting', async () => {
+  jest.useFakeTimers();
+  const current = configuration();
+  jest.mocked(rememberedController).mockResolvedValue('remembered-id');
+  const command = jest
+    .spyOn(PixiesClient.prototype, 'command')
+    .mockImplementation(async op =>
+      op === 'config'
+        ? current
+        : { ...healthFixture(), bootId: current.bootId },
+    );
+  await act(async () => {
+    rendered = TestRenderer.create(<App />);
+  });
+  await act(async () =>
+    rendered.root.findByProps({ label: 'Schedule' }).props.onPress(),
+  );
+  expect(
+    rendered.root.findByProps({ accessibilityLabel: 'Save schedule' }).props
+      .disabled,
+  ).toBe(true);
+  await act(async () =>
+    rendered.root
+      .findByProps({ accessibilityLabel: 'Open Updates' })
+      .props.onPress(),
+  );
+  expect(rendered.root.findByType(UpdatePanel).props.visible).toBe(true);
+  await act(async () => jest.advanceTimersByTime(60000));
+  expect(command.mock.calls.map(([op]) => op)).toEqual(['config', 'status']);
+});
+test('malformed scheduling cannot disconnect working lights; manual acks retain palette drafts and foreground syncs', async () => {
+  let current = configuration();
+  const schedule = scheduleFixture();
+  schedule.bootId = current.bootId;
+  let malformed = true;
+  jest.mocked(rememberedController).mockResolvedValue('remembered-id');
+  const command = jest
+    .spyOn(PixiesClient.prototype, 'command')
+    .mockImplementation(async (op, args) => {
+      if (op === 'config') return current;
+      if (op === 'status')
+        return {
+          ...healthFixture(),
+          bootId: current.bootId,
+          capabilities: { weeklySchedule: 1 },
+          scheduling: {},
+        };
+      if (op === 'clock.sync' || op === 'schedule.get')
+        return malformed ? {} : schedule;
+      if (op === 'lights.set') {
+        current = {
+          ...current,
+          revision: current.revision + 1,
+          config: { ...current.config, on: args?.on as boolean },
+        };
+        return current;
+      }
+      throw new Error(`Unexpected operation ${op}`);
+    });
+  await act(async () => {
+    rendered = TestRenderer.create(<App />);
+  });
+  expect(
+    rendered.root.findByProps({ accessibilityLabel: 'Lights on' }).props
+      .disabled,
+  ).toBe(false);
+  await act(async () =>
+    rendered.root.findByProps({ label: 'Christmas' }).props.onPress(),
+  );
+  malformed = false;
+  await act(async () =>
+    rendered.root
+      .findByProps({ accessibilityLabel: 'Lights on' })
+      .props.onValueChange(false),
+  );
+  expect(rendered.root.findByProps({ label: 'Christmas' }).props.selected).toBe(
+    true,
+  );
+  expect(command.mock.calls.filter(([op]) => op === 'config.set')).toHaveLength(
+    0,
+  );
+  const before = command.mock.calls.filter(
+    ([op]) => op === 'clock.sync',
+  ).length;
+  await act(async () => {
+    lifecycle.forEach(fn => fn('background'));
+    lifecycle.forEach(fn => fn('active'));
+  });
+  expect(command.mock.calls.filter(([op]) => op === 'clock.sync')).toHaveLength(
+    before + 1,
+  );
+});
+test('foreground Lights follows automatic boundaries and manual overrides without replacing lighting or palette drafts', async () => {
+  jest.useFakeTimers();
+  let current = configuration();
+  let schedule = scheduleFixture();
+  schedule.runtime.effectiveOn = false;
+  let failRefresh = false;
+  const command = jest
+    .spyOn(PixiesClient.prototype, 'command')
+    .mockImplementation(async (op, args) => {
+      if (op === 'config') return current;
+      if (op === 'status')
+        return {
+          ...healthFixture(),
+          bootId: current.bootId,
+          capabilities: { weeklySchedule: 1 },
+        };
+      if (op === 'clock.sync') return schedule;
+      if (op === 'schedule.get') {
+        if (failRefresh) throw new Error('Runtime temporarily unavailable');
+        return schedule;
+      }
+      if (op === 'lights.set') {
+        const on = args?.on as boolean;
+        current = {
+          ...current,
+          revision: current.revision + 1,
+          config: { ...current.config, on },
+        };
+        schedule = {
+          ...schedule,
+          runtime: {
+            ...schedule.runtime,
+            effectiveOn: on,
+            overrideActive: true,
+            overrideOn: on,
+          },
+        };
+        return current;
+      }
+      throw new Error(`Unexpected operation ${op}`);
+    });
+  await connectController();
+  const lights = () =>
+    rendered.root.findByProps({ accessibilityLabel: 'Lights on' });
+  expect(lights().props.value).toBe(false);
+  await act(async () => {
+    rendered.root.findByProps({ label: 'Christmas' }).props.onPress();
+    rendered.root
+      .findByProps({ accessibilityLabel: 'brightness' })
+      .props.onValueChange(47);
+    rendered.root
+      .findByProps({ accessibilityLabel: 'LED count' })
+      .props.onValueChange(350);
+    rendered.root
+      .findByProps({ accessibilityLabel: 'Palette name' })
+      .props.onChangeText('Unsaved palette');
+  });
+  schedule = {
+    ...schedule,
+    runtime: { ...schedule.runtime, effectiveOn: true },
+  };
+  await act(async () => jest.advanceTimersByTime(60000));
+  expect(lights().props.value).toBe(true);
+  failRefresh = true;
+  await act(async () => lights().props.onValueChange(!lights().props.value));
+  expect(command.mock.calls.find(([op]) => op === 'lights.set')?.[1]).toEqual({
+    bootId: current.bootId,
+    baseRevision: 1,
+    on: false,
+  });
+  expect(lights().props.value).toBe(false);
+  failRefresh = false;
+  schedule = {
+    ...schedule,
+    runtime: {
+      ...schedule.runtime,
+      effectiveOn: true,
+      overrideActive: false,
+    },
+  };
+  await act(async () => jest.advanceTimersByTime(15000));
+  expect(lights().props.value).toBe(true);
+  expect(rendered.root.findByProps({ label: 'Christmas' }).props.selected).toBe(
+    true,
+  );
+  expect(
+    rendered.root.findByProps({ accessibilityLabel: 'brightness' }).props.value,
+  ).toBe(47);
+  expect(
+    rendered.root.findByProps({ accessibilityLabel: 'LED count' }).props.value,
+  ).toBe(350);
+  expect(
+    rendered.root.findByProps({ accessibilityLabel: 'Palette name' }).props
+      .value,
+  ).toBe('Unsaved palette');
+  expect(command.mock.calls.filter(([op]) => op === 'config')).toHaveLength(1);
+  expect(
+    command.mock.calls.filter(([op]) => op.startsWith('config.')),
+  ).toHaveLength(0);
+});
+test('runtime polling serializes commands, pauses when inactive or unfocused, and rejects late background results', async () => {
+  jest.useFakeTimers();
+  const current = configuration();
+  let schedule = scheduleFixture();
+  schedule.runtime.effectiveOn = false;
+  let finish: (value: unknown) => void = () => {};
+  const command = jest
+    .spyOn(PixiesClient.prototype, 'command')
+    .mockImplementation(async op => {
+      if (op === 'config') return current;
+      if (op === 'status')
+        return {
+          ...healthFixture(),
+          bootId: current.bootId,
+          capabilities: { weeklySchedule: 1 },
+        };
+      if (op === 'clock.sync') return schedule;
+      if (op === 'schedule.get')
+        return new Promise(resolve => {
+          finish = resolve;
+        });
+      throw new Error(`Unexpected operation ${op}`);
+    });
+  await connectController();
+  await act(async () => jest.advanceTimersByTime(15000));
+  expect(
+    command.mock.calls.filter(([op]) => op === 'schedule.get'),
+  ).toHaveLength(1);
+  expect(
+    rendered.root.findByProps({ accessibilityLabel: 'Lights on' }).props
+      .disabled,
+  ).toBe(true);
+  await act(async () => {
+    rendered.root
+      .findByProps({ accessibilityLabel: 'Lights on' })
+      .props.onValueChange(true);
+    jest.advanceTimersByTime(60000);
+  });
+  expect(command.mock.calls.filter(([op]) => op === 'lights.set')).toHaveLength(
+    0,
+  );
+  expect(command.mock.calls.filter(([op]) => op === 'schedule.get')).toHaveLength(
+    1,
+  );
+  await act(async () => {
+    lifecycle.forEach(fn => fn('background'));
+    finish({
+      ...schedule,
+      runtime: { ...schedule.runtime, effectiveOn: true },
+    });
+  });
+  expect(
+    rendered.root.findByProps({ accessibilityLabel: 'Lights on' }).props.value,
+  ).toBe(false);
+  const before = command.mock.calls.length;
+  await act(async () => jest.advanceTimersByTime(60000));
+  expect(command).toHaveBeenCalledTimes(before);
+  schedule = {
+    ...schedule,
+    runtime: { ...schedule.runtime, effectiveOn: true },
+  };
+  await act(async () => lifecycle.forEach(fn => fn('active')));
+  expect(
+    rendered.root.findByProps({ accessibilityLabel: 'Lights on' }).props.value,
+  ).toBe(true);
+  await act(async () => lifecycle.forEach(fn => fn('inactive')));
+  const inactive = command.mock.calls.length;
+  await act(async () => jest.advanceTimersByTime(60000));
+  expect(command).toHaveBeenCalledTimes(inactive);
+  await act(async () => lifecycle.forEach(fn => fn('active')));
+  await openSettings('Device settings');
+  const unfocused = command.mock.calls.length;
+  await act(async () => jest.advanceTimersByTime(60000));
+  expect(command).toHaveBeenCalledTimes(unfocused);
+  await act(async () =>
+    rendered.root.findByProps({ label: 'Back to lights' }).props.onPress(),
+  );
+  expect(command.mock.calls.at(-1)?.[0]).toBe('schedule.get');
+  await act(async () => finish(schedule));
+  await act(async () =>
+    rendered.root.findByType(UpdatePanel).props.onBusy(true),
+  );
+  const updating = command.mock.calls.length;
+  await act(async () => jest.advanceTimersByTime(60000));
+  expect(command).toHaveBeenCalledTimes(updating);
+  await act(async () =>
+    rendered.root.findByType(UpdatePanel).props.onBusy(false),
+  );
+});
+test.each(['disconnect', 'unmount', 'focus change'])(
+  'a late runtime read after %s cannot revive stale output or keep polling',
+  async event => {
+    jest.useFakeTimers();
+    const current = configuration();
+    current.config.on = false;
+    const schedule = scheduleFixture();
+    schedule.runtime.effectiveOn = false;
+    let finish: (value: unknown) => void = () => {};
+    const command = jest
+      .spyOn(PixiesClient.prototype, 'command')
+      .mockImplementation(async op => {
+        if (op === 'config') return current;
+        if (op === 'status')
+          return {
+            ...healthFixture(),
+            bootId: current.bootId,
+            capabilities: { weeklySchedule: 1 },
+          };
+        if (op === 'clock.sync') return schedule;
+        if (op === 'schedule.get')
+          return new Promise(resolve => {
+            finish = resolve;
+          });
+        throw new Error(`Unexpected operation ${op}`);
+      });
+    await connectController();
+    await act(async () => jest.advanceTimersByTime(15000));
+    expect(
+      command.mock.calls.filter(([op]) => op === 'schedule.get'),
+    ).toHaveLength(1);
+    if (event === 'focus change') await openSettings('Device settings');
+    await act(async () => {
+      if (event === 'unmount') {
+        rendered.unmount();
+        unmounted = true;
+      } else if (event === 'disconnect') {
+        mockConnect.mockRejectedValue(new Error('Controller unavailable'));
+        mockConnect.mock.calls[0][1](new Error('Disconnected'));
+      }
+    });
+    await act(async () =>
+      finish({
+        ...schedule,
+        runtime: { ...schedule.runtime, effectiveOn: true },
+      }),
+    );
+    if (event === 'disconnect') {
+      expect(
+        rendered.root.findByProps({ accessibilityLabel: 'Lights on' }).props
+          .disabled,
+      ).toBe(true);
+      expect(
+        rendered.root.findByType(ScheduleScreen).props.response,
+      ).toBeNull();
+    }
+    if (event !== 'unmount') {
+      expect(
+        rendered.root.findByProps({ accessibilityLabel: 'Lights on' }).props
+          .value,
+      ).toBe(false);
+    }
+    const before = command.mock.calls.length;
+    await act(async () => jest.advanceTimersByTime(60000));
+    expect(command).toHaveBeenCalledTimes(before);
+  },
+);
+test('Schedule saves use the editor base, block remote conflicts, and settle their own confirmed acknowledgement', async () => {
+  jest.useFakeTimers();
+  const current = configuration();
+  let schedule = scheduleFixture();
+  const command = jest
+    .spyOn(PixiesClient.prototype, 'command')
+    .mockImplementation(async (op, args) => {
+      if (op === 'config') return current;
+      if (op === 'status')
+        return {
+          ...healthFixture(),
+          bootId: current.bootId,
+          capabilities: { weeklySchedule: 1 },
+        };
+      if (op === 'clock.sync' || op === 'schedule.get') return schedule;
+      if (op === 'schedule.save') {
+        expect(args?.baseRevision).toBe(schedule.revision);
+        schedule = {
+          ...schedule,
+          revision: schedule.revision + 1,
+          schedule: args?.schedule as typeof schedule.schedule,
+        };
+        return schedule;
+      }
+      throw new Error(`Unexpected operation ${op}`);
+    });
+  await connectController();
+  await act(async () =>
+    rendered.root.findByProps({ label: 'Schedule' }).props.onPress(),
+  );
+  await act(async () =>
+    rendered.root
+      .findByProps({ accessibilityLabel: 'Monday enabled' })
+      .props.onValueChange(true),
+  );
+  schedule = {
+    ...schedule,
+    revision: schedule.revision + 1,
+    schedule: {
+      ...schedule.schedule,
+      days: schedule.schedule.days.map((d, i) =>
+        i === 1 ? { ...d, enabled: true } : d,
+      ),
+    },
+  };
+  await act(async () => jest.advanceTimersByTime(15000));
+  expect(
+    rendered.root.findByProps({ accessibilityLabel: 'Monday enabled' }).props
+      .value,
+  ).toBe(true);
+  expect(
+    rendered.root.findByProps({ accessibilityLabel: 'Save schedule' }).props
+      .disabled,
+  ).toBe(true);
+  await act(async () =>
+    rendered.root
+      .findByType(ScheduleScreen)
+      .props.onSave(schedule.schedule, { bootId: schedule.bootId, revision: 1 }),
+  );
+  expect(
+    command.mock.calls.filter(([op]) => op === 'schedule.save'),
+  ).toHaveLength(0);
+  await act(async () =>
+    rendered.root
+      .findByProps({
+        accessibilityLabel: 'Discard draft and load saved schedule',
+      })
+      .props.onPress(),
+  );
+  await act(async () =>
+    rendered.root
+      .findByProps({ accessibilityLabel: 'Monday enabled' })
+      .props.onValueChange(true),
+  );
+  await act(async () =>
+    rendered.root
+      .findByProps({ accessibilityLabel: 'Save schedule' })
+      .props.onPress(),
+  );
+  expect(
+    command.mock.calls.find(([op]) => op === 'schedule.save')?.[1],
+  ).toMatchObject({
+    bootId: schedule.bootId,
+    baseRevision: 2,
+  });
+  expect(
+    rendered.root.findByProps({ accessibilityLabel: 'Save schedule' }).props
+      .disabled,
+  ).toBe(false);
+  expect(JSON.stringify(rendered.toJSON())).not.toContain('Schedule changed');
+  expect(rendered.root.findByType(ScheduleScreen).props.error).toBe(
+    'Schedule saved on controller. No restart needed.',
+  );
 });
 test('never substitutes another controller when the remembered one cannot connect', async () => {
   jest.mocked(rememberedController).mockResolvedValue('missing-id');
@@ -593,9 +1042,7 @@ test('RGB picker Done and Cancel stay local until the palette draft is explicitl
   expect(
     rendered.root.findByProps({ testID: 'operation-status' }).props.children,
   ).toContain('Use 1-32 ASCII characters for a name');
-  expect(
-    rendered.root.findAllByProps({ label: 'Edit Night' }),
-  ).toHaveLength(0);
+  expect(rendered.root.findAllByProps({ label: 'Edit Night' })).toHaveLength(0);
   await act(async () =>
     rendered.root
       .findByProps({ accessibilityLabel: 'Palette name' })
@@ -675,9 +1122,7 @@ test('adds a fifth chosen color, cancels additions and guards a sixth even if th
   await act(async () =>
     rendered.root.findByProps({ label: 'Add color' }).props.onPress(),
   );
-  await act(async () =>
-    rendered.root.findByType(Modal).props.onRequestClose(),
-  );
+  await act(async () => rendered.root.findByType(Modal).props.onRequestClose());
   expect(
     rendered.root.findAllByProps({ accessibilityLabel: 'Edit color 5' }),
   ).toHaveLength(0);
@@ -698,9 +1143,9 @@ test('adds a fifth chosen color, cancels additions and guards a sixth even if th
     rendered.root.findByProps({ accessibilityLabel: 'Edit color 5' }).props
       .accessibilityValue.text,
   ).toBe('#000000');
-  expect(
-    rendered.root.findByProps({ label: 'Add color' }).props.disabled,
-  ).toBe(true);
+  expect(rendered.root.findByProps({ label: 'Add color' }).props.disabled).toBe(
+    true,
+  );
   await act(async () =>
     rendered.root.findByProps({ label: 'Add color' }).props.onPress(),
   );
@@ -715,9 +1160,9 @@ test('adds a fifth chosen color, cancels additions and guards a sixth even if th
     rendered.root.findByProps({ accessibilityLabel: 'Edit color 2' }).props
       .accessibilityValue.text,
   ).toBe(colors[2]);
-  expect(
-    rendered.root.findByProps({ label: 'Add color' }).props.disabled,
-  ).toBe(false);
+  expect(rendered.root.findByProps({ label: 'Add color' }).props.disabled).toBe(
+    false,
+  );
   expect(current.config.customPalettes[0].colors).toEqual(colors);
   expect(command.mock.calls.map(([op]) => op)).toEqual(['config', 'status']);
 });
@@ -829,9 +1274,9 @@ test.each([6, 8])(
           .props.onPress(),
       );
     }
-    expect(
-      rendered.root.findByProps({ label: 'Preview' }).props.disabled,
-    ).toBe(true);
+    expect(rendered.root.findByProps({ label: 'Preview' }).props.disabled).toBe(
+      true,
+    );
     expect(current.config.customPalettes[0].colors).toEqual(colors);
     expect(command.mock.calls.map(([op]) => op)).toEqual(['config', 'status']);
     await act(async () =>
@@ -839,12 +1284,12 @@ test.each([6, 8])(
         .findByProps({ label: 'Update palette draft' })
         .props.onPress(),
     );
-    expect(
-      rendered.root.findByProps({ label: 'Preview' }).props.disabled,
-    ).toBe(false);
-    expect(
-      rendered.root.findByProps({ label: 'Save' }).props.disabled,
-    ).toBe(false);
+    expect(rendered.root.findByProps({ label: 'Preview' }).props.disabled).toBe(
+      false,
+    );
+    expect(rendered.root.findByProps({ label: 'Save' }).props.disabled).toBe(
+      false,
+    );
     await act(async () =>
       rendered.root.findByProps({ label: 'Preview' }).props.onPress(),
     );

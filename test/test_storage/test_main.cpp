@@ -65,7 +65,31 @@ void independent_checked_power_record() {
   TEST_ASSERT_TRUE(store.factoryReset()); TEST_ASSERT_FALSE(store.loadPower(restored));
   TEST_ASSERT_EQUAL_STRING("missing",store.powerRecovery);
 }
+void separate_checked_schedule_survives_old_lighting_saves() {
+  SettingsStore store; TEST_ASSERT_TRUE(store.begin());
+  pixies::ScheduleV1 s;
+  TEST_ASSERT_FALSE(store.loadSchedule(s)); TEST_ASSERT_EQUAL_STRING("missing",store.scheduleRecovery);
+  s.enabled=s.hasTimezone=true; strcpy(s.timezone.id,"Etc/UTC");
+  s.timezone.fromUtc=pixies::kUtcStart; s.timezone.untilUtc=pixies::kUtcEnd;
+  s.days[0]={true,600,660};
+  TEST_ASSERT_TRUE(store.saveSchedule(s));
+  TEST_ASSERT_TRUE(store.saveSettings(pixies::Settings{}));
+  pixies::ScheduleV1 restored; TEST_ASSERT_TRUE(store.loadSchedule(restored));
+  TEST_ASSERT_TRUE(restored.enabled); TEST_ASSERT_EQUAL(600,restored.days[0].onMinute);
+  fake_nvs::failWrite=true; TEST_ASSERT_FALSE(store.saveSchedule(pixies::ScheduleV1{}));
+  fake_nvs::failWrite=false;
+  TEST_ASSERT_TRUE(store.loadSchedule(restored)); TEST_ASSERT_TRUE(restored.enabled);
+  fake_nvs::failRead=true; TEST_ASSERT_FALSE(store.saveSchedule(s)); fake_nvs::failRead=false;
+  fake_nvs::records["px-settings/schedule"].back()^=1;
+  restored.enabled=false;
+  TEST_ASSERT_FALSE(store.loadSchedule(restored)); TEST_ASSERT_FALSE(restored.enabled);
+  TEST_ASSERT_EQUAL_STRING("invalid_record",store.scheduleRecovery);
+  TEST_ASSERT_TRUE(store.saveSchedule(s));
+  TEST_ASSERT_TRUE(store.factoryReset()); TEST_ASSERT_FALSE(store.loadSchedule(restored));
+  TEST_ASSERT_EQUAL_STRING("missing",store.scheduleRecovery);
+}
 int main() {
   UNITY_BEGIN(); RUN_TEST(actual_settings_adapter); RUN_TEST(separated_credentials_and_reset);
-  RUN_TEST(unavailable_storage); RUN_TEST(independent_checked_power_record); return UNITY_END();
+  RUN_TEST(unavailable_storage); RUN_TEST(independent_checked_power_record);
+  RUN_TEST(separate_checked_schedule_survives_old_lighting_saves); return UNITY_END();
 }

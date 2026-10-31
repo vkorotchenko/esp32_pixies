@@ -5,6 +5,7 @@
 #include "../../src/NetworkManager.cpp"
 #include "../../src/OtaUpdater.cpp"
 #include "../../src/DeviceControl.cpp"
+#include "../../src/ClockService.cpp"
 #include "../../src/BleControl.cpp"
 
 // Crypto/session internals are outside this dispatcher fixture. The dispatcher,
@@ -196,18 +197,19 @@ struct BleFixture:Fixture {
     peer.encrypted=encrypted; peer.bonded=bonded;
     server.callbacks->onAuthenticationComplete(peer);
   }
-  int command(const char* op,const char* body="{}",bool deferredRestart=false) {
+  int command(const char* op,const char* body="{}",bool deferredRestart=false,size_t packetSize=pixies::ble::kMaxPacket,const std::string* raw=nullptr) {
     DynamicJsonDocument request(pixies::kJsonCapacity);
     request["op"]=op;
     TEST_ASSERT_FALSE(bool(deserializeJson(args,body)));
     request["args"]=args.as<JsonVariantConst>();
     std::string json; serializeJson(request,json);
+    if(raw) json=*raw;
     server.service.tx.notifications.clear();
     server.service.tx.callbacks->onSubscribe(&server.service.tx,peer,1);
     uint8_t bytes[pixies::ble::kMaxPacket]; size_t offset=0;
     while(offset<json.size()) {
       const size_t n=pixies::ble::packet(reinterpret_cast<const uint8_t*>(json.data()),
-        json.size(),25,false,offset,bytes,sizeof bytes);
+        json.size(),25,false,offset,bytes,packetSize);
       server.service.rx.setValue(bytes,n); server.service.rx.callbacks->onWrite(&server.service.rx,peer);
       bluetooth.tick(time+=10); offset+=n-pixies::ble::kHeader;
     }
@@ -217,13 +219,14 @@ struct BleFixture:Fixture {
       TEST_ASSERT_FALSE(control.restarting);
     }
     size_t seen=0;
-    for(unsigned step=0;step<100;++step) {
+    for(unsigned step=0;step<1000;++step) {
       bluetooth.tick(time+=10);
       while(seen<server.service.tx.notifications.size()) {
         const auto& frame=server.service.tx.notifications[seen++];
         if(response.push(frame.data(),frame.size(),time,true)==pixies::ble::Result::Complete) {
           if(deferredRestart) TEST_ASSERT_TRUE(control.restarting);
-          TEST_ASSERT_FALSE(bool(deserializeJson(reply,response.data(),response.size())));
+          // Read-only input makes reply own strings after the local receiver dies.
+          TEST_ASSERT_FALSE(bool(deserializeJson(reply,static_cast<const char*>(response.data()),response.size())));
           return reply["status"].as<int>();
         }
       }
@@ -411,6 +414,100 @@ void reconnect_cannot_replay_a_previous_pairing_session() {
   f.write(true,true); f.bluetooth.tick(101);
   TEST_ASSERT_EQUAL(42,f.settings.live.brightness);
 }
+pixies::ScheduleV1 weekly() {
+  pixies::ScheduleV1 s; s.enabled=s.hasTimezone=true;
+  strcpy(s.timezone.id,"Etc/UTC"); s.timezone.fromUtc=pixies::kUtcStart; s.timezone.untilUtc=pixies::kUtcEnd;
+  s.days[0]={true,600,660}; return s;
+}
+std::string scheduleArgs(Fixture& f,const pixies::ScheduleV1& s) {
+  DynamicJsonDocument doc(4096);
+  doc["bootId"]=f.control.bootId; doc["baseRevision"]=f.control.scheduleRevision;
+  pixies::writeSchedule(doc.createNestedObject("schedule"),s);
+  std::string result; serializeJson(doc,result); return result;
+}
+void schedule_dispatcher_boot_revision_storage_and_render_authority() {
+  constexpr int64_t mon=1792972800LL;
+  Fixture f;
+  TEST_ASSERT_EQUAL(200,f.call("schedule.get"));
+  TEST_ASSERT_FALSE(f.reply["schedule"]["enabled"].as<bool>());
+  const auto s=weekly(); auto args=scheduleArgs(f,s);
+  TEST_ASSERT_EQUAL(200,f.call("schedule.save",args.c_str()));
+  TEST_ASSERT_FALSE(f.control.schedule.effectiveOn);
+  TEST_ASSERT_EQUAL(1,f.settings.revision); TEST_ASSERT_FALSE(f.settings.dirty());
+  TEST_ASSERT_EQUAL(409,f.call("schedule.save",args.c_str()));
+  const auto record=fake_nvs::records["px-settings/schedule"];
+  const auto writes=fake_nvs::writes;
+  args="{\"bootId\":\"0000000000000000\",\"utcSeconds\":1793008800}";
+  TEST_ASSERT_EQUAL(409,f.call("clock.sync",args.c_str()));
+  args="{\"bootId\":\""+std::string(f.control.bootId.c_str())+"\",\"utcSeconds\":"+std::to_string(mon+610*60)+"}";
+  TEST_ASSERT_EQUAL(200,f.call("clock.sync",args.c_str()));
+  TEST_ASSERT_TRUE(f.control.schedule.effectiveOn);
+  f.control.scheduleTick(fake_wifi::now+3600000);
+  TEST_ASSERT_FALSE(f.control.schedule.effectiveOn);
+  TEST_ASSERT_EQUAL_MEMORY(record.data(),fake_nvs::records["px-settings/schedule"].data(),record.size());
+  TEST_ASSERT_EQUAL(writes,fake_nvs::writes);
+  TEST_ASSERT_EQUAL(1,f.settings.revision); TEST_ASSERT_FALSE(f.settings.dirty());
+  fake_wifi::now+=3600000;
+  fake_nvs::failWrite=true; auto disabled=s; disabled.enabled=false;
+  args=scheduleArgs(f,disabled);
+  TEST_ASSERT_EQUAL(500,f.call("schedule.save",args.c_str()));
+  TEST_ASSERT_TRUE(f.control.schedule.saved.enabled);
+  fake_nvs::failWrite=false;
+  Fixture reboot; TEST_ASSERT_FALSE(reboot.control.clock.synced());
+  TEST_ASSERT_TRUE(reboot.control.schedule.saved.enabled); TEST_ASSERT_FALSE(reboot.control.schedule.effectiveOn);
+}
+void explicit_same_intent_arms_override_palette_previews_do_not() {
+  constexpr int64_t mon=1792972800LL;
+  Fixture f; f.control.clock.sync(mon+590*60,"phone",fake_wifi::now);
+  auto args=scheduleArgs(f,weekly()); TEST_ASSERT_EQUAL(200,f.call("schedule.save",args.c_str()));
+  TEST_ASSERT_TRUE(f.settings.live.on); TEST_ASSERT_FALSE(f.control.schedule.effectiveOn);
+  args="{\"bootId\":\""+std::string(f.control.bootId.c_str())+"\",\"baseRevision\":1,\"on\":true}";
+  TEST_ASSERT_EQUAL(200,f.call("lights.set",args.c_str()));
+  TEST_ASSERT_TRUE(f.control.schedule.overrideActive); TEST_ASSERT_TRUE(f.control.schedule.effectiveOn);
+  TEST_ASSERT_EQUAL_INT64(mon+600*60,f.control.schedule.overrideUntilUtc);
+  auto desired=f.settings.live; desired.brightness=33;
+  TEST_ASSERT_EQUAL(200,f.preview(desired,2));
+  TEST_ASSERT_TRUE(f.control.schedule.overrideActive);
+  TEST_ASSERT_EQUAL(200,f.call("config.save","{\"baseRevision\":3}"));
+  TEST_ASSERT_TRUE(f.control.schedule.overrideActive);
+  args="{\"bootId\":\""+std::string(f.control.bootId.c_str())+"\"}";
+  TEST_ASSERT_EQUAL(200,f.call("schedule.resume",args.c_str()));
+  TEST_ASSERT_FALSE(f.control.schedule.overrideActive); TEST_ASSERT_FALSE(f.control.schedule.effectiveOn);
+  desired.on=false; TEST_ASSERT_EQUAL(200,f.preview(desired,3));
+  TEST_ASSERT_TRUE(f.control.schedule.overrideActive);
+  f.control.ota.busy=true;
+  TEST_ASSERT_EQUAL(409,f.call("schedule.resume",args.c_str()));
+}
+void full_schedule_over_minimum_mtu_and_compact_status_capacity() {
+  BleFixture f; f.server.peerMtu=23; f.authenticate(true,true);
+  auto s=weekly(); s.timezone.count=16;
+  for(size_t i=0;i<16;++i) s.timezone.transitions[i]={pixies::kUtcStart+int64_t(i+1)*86400,int32_t(i%2?3600:0)};
+  auto args=scheduleArgs(f,s);
+  TEST_ASSERT_EQUAL(200,f.command("schedule.save",args.c_str(),false,20));
+  TEST_ASSERT_EQUAL(16,f.reply["body"]["schedule"]["timezone"]["transitions"].size());
+  TEST_ASSERT_LESS_OR_EQUAL(4096,measureJson(f.reply["body"]));
+  StaticJsonDocument<4096> compact;
+  f.control.status(compact); TEST_ASSERT_FALSE(compact.overflowed());
+  TEST_ASSERT_EQUAL(1,compact["capabilities"]["weeklySchedule"].as<int>());
+  TEST_ASSERT_FALSE(compact["scheduling"].containsKey("transitions"));
+  TEST_ASSERT_FALSE(compact["scheduling"].containsKey("days"));
+}
+void scheduling_raw_wire_limit_and_corrupt_storage_manual_fallback() {
+  {
+    BleFixture f; f.authenticate(true,true);
+    const std::string raw="{\"op\":\"schedule.get\",\"args\":{}}"+std::string(4096,' ');
+    TEST_ASSERT_EQUAL(413,f.command("schedule.get","{}",false,pixies::ble::kMaxPacket,&raw));
+  }
+  NimBLEDevice::resetForTest();
+  SettingsStore store; store.begin(); TEST_ASSERT_TRUE(store.saveSchedule(weekly()));
+  fake_nvs::records["px-settings/schedule"].back()^=1;
+  Fixture f;
+  TEST_ASSERT_FALSE(f.control.schedule.healthy);
+  TEST_ASSERT_EQUAL_STRING("storage_invalid",f.control.schedule.pauseReason);
+  std::string args="{\"bootId\":\""+std::string(f.control.bootId.c_str())+"\",\"baseRevision\":1,\"on\":false}";
+  TEST_ASSERT_EQUAL(200,f.call("lights.set",args.c_str()));
+  TEST_ASSERT_FALSE(f.control.schedule.effectiveOn);
+}
 int main() {
   UNITY_BEGIN(); RUN_TEST(common_defaults_and_sanitized_state);
   RUN_TEST(power_saves_are_checked_independent_and_do_not_restart);
@@ -430,5 +527,9 @@ int main() {
   RUN_TEST(ble_ota_complete_image_drains_reply_before_restart_and_preserves_settings);
   RUN_TEST(bluetooth_name_is_pixies_without_changing_network_identity);
   RUN_TEST(ordinary_save_never_restarts_and_only_count_changes_wait_for_restart);
+  RUN_TEST(schedule_dispatcher_boot_revision_storage_and_render_authority);
+  RUN_TEST(explicit_same_intent_arms_override_palette_previews_do_not);
+  RUN_TEST(full_schedule_over_minimum_mtu_and_compact_status_capacity);
+  RUN_TEST(scheduling_raw_wire_limit_and_corrupt_storage_manual_fallback);
   return UNITY_END();
 }

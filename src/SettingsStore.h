@@ -1,6 +1,7 @@
 #pragma once
 #include <Preferences.h>
 #include <SettingsJson.h>
+#include <ScheduleJson.h>
 
 struct WifiCredential {
   char ssid[33]{};
@@ -15,11 +16,14 @@ class SettingsStore {
   const char* settingsRecovery = "missing";
   const char* credentialRecovery = "none";
   const char* powerRecovery = "missing";
+  const char* scheduleRecovery = "missing";
   bool begin();
   bool loadSettings(pixies::Settings&);
   bool saveSettings(const pixies::Settings&);
   bool loadPower(pixies::PowerSettings&);
   bool savePower(const pixies::PowerSettings&);
+  bool loadSchedule(pixies::ScheduleV1&);
+  bool saveSchedule(const pixies::ScheduleV1&);
   bool loadWifi(WifiCredential&);
   bool saveWifi(const WifiCredential&);
   bool loadAdmin(AdminVerifier&);
