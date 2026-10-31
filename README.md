@@ -9,6 +9,12 @@ and phone-managed BLE firmware and Android app updates.
 No hotspot join, app account, or custom PIN is required. The website remains an
 optional local-network/fallback interface.
 
+Twinkle, Candle, Breathe and Chase light at most half the active LEDs in any
+frame, alternating every-other-LED groups at the selected speed. Odd counts
+round down and rotate the extra unlit position so every LED gets a turn.
+Steady is the only full-string effect; existing brightness and power limits
+still apply to all effects.
+
 The app opens on **Lights** while it reconnects the remembered controller and
 checks for updates. On first use, it auto-connects only if one controller appears
 in the scan. Lights stays visible with greyed-out, disabled controls offline.

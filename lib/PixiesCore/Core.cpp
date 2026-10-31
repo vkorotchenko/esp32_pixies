@@ -111,6 +111,7 @@ Power render(const Settings& s,bool effectiveOn,uint64_t ms,Rgb* out,size_t coun
   const Palette* pal = selectedPalette(s);
   if (!pal || !pal->count) return p;
   const uint32_t period = 300U + (100U-s.speed)*47U;
+  const size_t offset = size_t((ms/period)%count);
   uint64_t sum = 0;
   for (size_t i=0; i<count; ++i) {
     size_t color = i%pal->count;
@@ -141,6 +142,11 @@ Power render(const Settings& s,bool effectiveOn,uint64_t ms,Rgb* out,size_t coun
         if (seed%100<s.density) level=level*(255U-noise*s.intensity/100U)/255U;
         break;
       }
+    }
+    if (s.effect!=Effect::Steady) {
+      // Rotate the spare unlit position on odd strings instead of excluding one LED forever.
+      const size_t position=(i+count-offset)%count;
+      if (position%2 || position>=count-1) level=0;
     }
     const Rgb c=pal->colors[color];
     level=level*s.brightness/100U;

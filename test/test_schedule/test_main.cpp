@@ -128,6 +128,17 @@ void effective_render_never_changes_manual_intent_or_power_limit() {
   TEST_ASSERT_FALSE(s.on); TEST_ASSERT_TRUE(p.limited);
   TEST_ASSERT_GREATER_THAN(0,frame[0].b);
   render(s,false,0,frame,10,9000); TEST_ASSERT_EQUAL(0,frame[0].b);
+  std::array<Rgb,200> animated{};
+  for(unsigned effect=0;effect<5;++effect) for(uint64_t time:{0ULL,2650ULL}) {
+    s.effect=Effect(effect);
+    render(s,true,time,animated.data(),animated.size(),9000);
+    size_t lit=0;
+    for(const auto& pixel:animated) if(!(pixel==Rgb{})) ++lit;
+    TEST_ASSERT_EQUAL(s.effect==Effect::Steady?200:100,lit);
+    TEST_ASSERT_FALSE(s.on);
+    render(s,false,time,animated.data(),animated.size(),9000);
+    for(const auto& pixel:animated) TEST_ASSERT_TRUE(pixel==Rgb{});
+  }
 }
 int main() {
   UNITY_BEGIN();
